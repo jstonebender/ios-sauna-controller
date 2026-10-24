@@ -6,17 +6,19 @@ struct RootTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var showSettings = false
+    @State private var isLandscape = false
 
     var body: some View {
         Group {
-            // Wide displays (iPhone Duo unfolded, iPad) get both screens at once; the
-            // size class flips to compact when the Duo closes, falling back to tabs.
-            if #available(iOS 27.1, *), hSizeClass == .regular {
+            // Side by side only on a wide display held landscape (iPhone Duo unfolded, iPad);
+            // portrait and the closed Duo (compact width) get the familiar tabs.
+            if #available(iOS 27.1, *), hSizeClass == .regular, isLandscape {
                 sideBySide
             } else {
                 tabs
             }
         }
+        .onGeometryChange(for: Bool.self) { $0.size.width > $0.size.height } action: { isLandscape = $0 }
         .sheet(isPresented: $showSettings) { SettingsView() }
         .task { SaunaActivityController.shared.configure(settings); store.startPolling() }
         .onChange(of: scenePhase) { _, phase in
@@ -25,8 +27,7 @@ struct RootTabView: View {
     }
 
     /// Log on the leading (left) side, Control on the trailing (right) side. ArrangementView
-    /// keeps the two panes off the Duo's fold and collapses to the primary alone when the
-    /// device is closed in landscape.
+    /// keeps the two panes off the Duo's fold; rotating to portrait hands back to the tabs.
     @available(iOS 27.1, *)
     private var sideBySide: some View {
         ArrangementView {
