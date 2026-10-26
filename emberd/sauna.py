@@ -65,6 +65,8 @@ class SaunaClient:
         self._raw: dict[str, Any] = {}
         self._pending: dict[str, tuple[Any, float]] = {}  # dp -> (commanded value, expires_at)
         self._timer_set: Optional[int] = None  # last commanded timer (the device only reports remaining)
+        self._heat_intent: Optional[bool] = None  # what the API last asked the heater to do
+        self._interrupted_at: Optional[float] = None  # heater went off without being asked
         self._online = False
         self._updated = 0.0
         self._temp_history: list[tuple[float, int]] = []  # (ts, currentTempF)
@@ -164,6 +166,7 @@ class SaunaClient:
         return self.state()
 
     def _merge_polled(self, dps: dict) -> None:
+        self._check_interruption(dps)
         if DP_POWER in dps and DP_POWER in self._raw and dps[DP_POWER] != self._raw[DP_POWER]:
             log.info("device: power %s -> %s", self._raw[DP_POWER], dps[DP_POWER])
             if not dps[DP_POWER]:
@@ -176,6 +179,25 @@ class SaunaClient:
         if isinstance(cf, int):
             self._temp_history.append((self._updated, cf))
             self._temp_history = self._temp_history[-5000:]
+
+    def _check_interruption(self, dps: dict) -> None:
+        """Flag heat that stops without the API asking. On the FD-5, waking the panel after
+        a remote start can switch the heater off (seen 2026-10-26). A heater that stops
+        because the timer ran out is expected, and so is anything inside the sticky
+        window right after our own write (the device can lag a beat)."""
+        heater = dps.get(DP_HEATER)
+        if heater is True:
+            self._interrupted_at = None
+            return
+        if heater is not False or not self._heat_intent or DP_HEATER in self._pending:
+            return
+        remaining = dps.get(DP_TIMER, self._raw.get(DP_TIMER))
+        self._heat_intent = None  # alert once per interruption
+        if isinstance(remaining, int) and remaining <= 1:
+            return
+        log.warning("heater switched off without a command (timer %s min left) — likely the panel",
+                    remaining)
+        self._interrupted_at = time.time()
 
     def state(self) -> dict:
         r = self._raw
@@ -196,6 +218,7 @@ class SaunaClient:
             "timerRemainingMin": remaining if power else None,
             "chromoColor": r.get(DP_LIGHT) if power else "Off",
             "unit": "f" if r.get(DP_UNIT_F, True) else "c",
+            "heaterInterruptedAt": self._interrupted_at,
             "online": self._online,
             "updatedAt": self._updated,
         }
@@ -253,6 +276,8 @@ class SaunaClient:
         raise RuntimeError(f"device did not apply DP{dp}={value!r}")
 
     async def set_power(self, on: bool) -> dict:
+        if not on:
+            self._heat_intent, self._interrupted_at = False, None  # power-off stops heat too
         st = await self._set_verified(DP_POWER, bool(on))
         if not on:
             self._timer_set = None  # the device resets its timer on the next power-on
@@ -269,7 +294,13 @@ class SaunaClient:
     async def set_heater(self, on: bool) -> dict:
         if on and not self._raw.get(DP_POWER):
             raise ValueError("power the sauna on before heating")
-        return await self._set_verified(DP_HEATER, bool(on))
+        # record the intent BEFORE writing so our own verify reads can't look like an interruption
+        self._heat_intent, self._interrupted_at = bool(on), None
+        try:
+            return await self._set_verified(DP_HEATER, bool(on))
+        except Exception:
+            self._heat_intent = None  # unknown outcome — don't alert on it
+            raise
 
     async def set_target_temp(self, temp_f: int) -> dict:
         lo, hi = TARGET_F_RANGE

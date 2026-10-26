@@ -10,6 +10,8 @@ struct SaunaState: Codable, Equatable, Sendable {
     var timerRemainingMin: Int? = nil
     var chromoColor: String? = nil
     var unit = "f"
+    /// Set by emberd when the heater stopped without being asked (e.g. a panel tap); epoch seconds.
+    var heaterInterruptedAt: Double? = nil
     var online = false
     var updatedAt: Double = 0
 
@@ -17,7 +19,7 @@ struct SaunaState: Codable, Equatable, Sendable {
 
     enum K: String, CodingKey {
         case power, heater, currentTempF, targetTempF, timerSetMin, timerRemainingMin
-        case chromoColor, unit, online, updatedAt
+        case chromoColor, unit, heaterInterruptedAt, online, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -33,6 +35,7 @@ struct SaunaState: Codable, Equatable, Sendable {
         timerRemainingMin = int(.timerRemainingMin)
         chromoColor = str(.chromoColor)
         unit = str(.unit) ?? "f"
+        heaterInterruptedAt = (try? c.decodeIfPresent(Double.self, forKey: .heaterInterruptedAt)) ?? nil
         online = bool(.online)
         updatedAt = ((try? c.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil) ?? 0
     }
@@ -57,6 +60,8 @@ struct SaunaState: Codable, Equatable, Sendable {
     /// FD-5 lights are one enum (DP111) where "Off" is a value; they only run while powered.
     var lightsOn: Bool { power && chromoColor != nil && chromoColor != ChromaPalette.off }
     var lightsScrolling: Bool { power && chromoColor == ChromaPalette.scroll }
+    /// Heat stopped mid-session without the app asking — offer to resume.
+    var heatInterrupted: Bool { heaterInterruptedAt != nil && !heater }
 
     /// 0…1 heat ratio for the gauge (75°F floor → target, capped at 170).
     var heatRatio: Double {

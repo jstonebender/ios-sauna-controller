@@ -26,6 +26,7 @@ final class SaunaStore {
     private var busyCount = 0 { didSet { busy = busyCount > 0 } }
     private var nudgeHoldsBusy = false   // the stepper holds ONE busy increment across its debounce
     private var pollFailures = 0
+    private var buzzedInterruption: Double?   // one haptic per heater interruption
     private var lastSuccessfulPollAt: Date?
 
     init(settings: AppSettings) { self.settings = settings }
@@ -62,6 +63,10 @@ final class SaunaStore {
             guard epoch == controlEpoch else { return }   // a control superseded this fetch — drop it
             state = s
             reconcileTimerDeadline(with: s)
+            if let at = s.heaterInterruptedAt, !s.heater, at != buzzedInterruption {
+                buzzedInterruption = at
+                Haptics.warning()
+            }
             pollFailures = 0
             reachable = true
             lastSuccessfulPollAt = Date()

@@ -67,8 +67,8 @@ class APNsClient:
 
     async def update_activity(self, push_token: str, content_state: dict,
                               priority: int = 5, stale_after_sec: int = 120,
-                              dismiss: bool = False, relevance: Optional[float] = None
-                              ) -> tuple[int, str]:
+                              dismiss: bool = False, relevance: Optional[float] = None,
+                              alert: Optional[dict] = None) -> tuple[int, str]:
         now = int(time.time())
         aps: dict[str, Any] = {
             "timestamp": now,
@@ -81,6 +81,8 @@ class APNsClient:
             aps["stale-date"] = now + stale_after_sec
         if relevance is not None:
             aps["relevance-score"] = relevance
+        if alert:
+            aps["alert"] = alert  # {title, body, sound}: lights up the Lock Screen
         headers = {
             "apns-priority": str(priority),
             # expiration 0 → APNs drops (doesn't queue/retry) a stale temperature update

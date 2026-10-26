@@ -174,7 +174,18 @@ private struct StartStopButton: View {
 private struct ControlFeedback: View {
     @Environment(SaunaStore.self) private var store
     var body: some View {
-        if let notice = store.controlNotice {
+        if store.state.heatInterrupted, !store.busy {
+            // the FD-5 panel can switch heat off when woken after a remote start
+            HStack(spacing: 10) {
+                Label("Heat was switched off — maybe a panel tap", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(.footnote, design: .rounded, weight: .medium))
+                    .foregroundStyle(Theme.emberHot)
+                Spacer(minLength: 4)
+                Button("Resume heat") { Task { await store.start() } }
+                    .font(.system(.footnote, design: .rounded, weight: .bold))
+                    .buttonStyle(.borderedProminent).tint(Theme.ember)
+            }
+        } else if let notice = store.controlNotice {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text(notice)

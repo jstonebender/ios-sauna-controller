@@ -167,6 +167,8 @@
     "111_lights": "Ignored while power is off (write acknowledged with no reply, value unchanged). With power on, colors and Off apply immediately.",
     "105_timer": "Writable AND counts down while running, so it's both timer set and time remaining.",
     "108_current_f": "Reported value is stale while power is off (read 156°F from an earlier session; jumped to the real 94°F on power on). Don't trust it while off.",
-    "109_unit": "true while the sauna uses °F; °C DPs (104, 106) are not reported in that mode."
+    "109_unit": "true while the sauna uses °F; °C DPs (104, 106) are not reported in that mode.",
+    "bluetooth": "Not exposed over Tuya (2026-10-26): enabling BT streaming at the panel changed no DP and no hidden DP appeared during a 3-min read-only watch with updatedps. Can't be enabled remotely.",
+    "panel_wake_quirk": "When the heater was started remotely, waking the panel (long-press) showed heater in the OFF position and the wake/press turned DP101 off (and nudged 105 85->87). Owner had to switch heat back on at the panel. App/bridge may want to warn about this or re-assert heat."
   }
 }

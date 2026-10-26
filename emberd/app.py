@@ -36,6 +36,7 @@ _session: Optional[dict] = None
 _last_pushed_content: Optional[dict] = None
 _last_push_at = 0.0
 _heater_on_since: Optional[float] = None
+_alerted_interruption: Optional[float] = None
 
 STALE_AFTER_SEC = 120
 KEEPALIVE_SEC = 90  # re-push before the Live Activity goes stale, even if temp unchanged
@@ -283,6 +284,7 @@ async def _push_loop():
             if not apns or not _activity_tokens:
                 continue
             st = sauna.state()
+            await _alert_interruption(st)
             if st.get("currentTempF") is None:
                 continue
             now = time.time()
@@ -309,6 +311,25 @@ async def _push_loop():
             raise
         except Exception as e:
             log.warning("push loop error: %s", e)
+
+
+async def _alert_interruption(st: dict):
+    """Once per interruption, push a Live Activity update that carries an alert, so a
+    heater switched off at the panel lights up the Lock Screen even with the app closed."""
+    global _alerted_interruption
+    at = st.get("heaterInterruptedAt")
+    if not at or at == _alerted_interruption:
+        return
+    _alerted_interruption = at
+    alert = {"title": "Sauna heater turned off",
+             "body": "Heat stopped before the timer ran out — maybe a panel tap. Open the app to resume.",
+             "sound": "default"}
+    for tok in list(_activity_tokens):
+        try:
+            await apns.update_activity(tok, _activity_content(st), priority=10,
+                                       stale_after_sec=STALE_AFTER_SEC, alert=alert)
+        except Exception as e:
+            log.warning("interruption alert failed for %s…: %s", tok[:8], e)
 
 
 async def _stop_sauna(reason: str):
