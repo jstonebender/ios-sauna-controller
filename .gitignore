@@ -54,3 +54,6 @@ homebridge-ember/dist/
 
 # ── macOS ──
 .DS_Store
+
+# ── FD-5 tinytuya wizard output (API secret + localKey) — never commit ──
+tools/fd5/

@@ -9,8 +9,6 @@ struct SaunaState: Codable, Equatable, Sendable {
     var timerSetMin: Int? = nil
     var timerRemainingMin: Int? = nil
     var chromoColor: String? = nil
-    var chromoCycle = false
-    var footwell = false
     var unit = "f"
     var online = false
     var updatedAt: Double = 0
@@ -19,7 +17,7 @@ struct SaunaState: Codable, Equatable, Sendable {
 
     enum K: String, CodingKey {
         case power, heater, currentTempF, targetTempF, timerSetMin, timerRemainingMin
-        case chromoColor, chromoCycle, footwell, unit, online, updatedAt
+        case chromoColor, unit, online, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -34,8 +32,6 @@ struct SaunaState: Codable, Equatable, Sendable {
         timerSetMin = int(.timerSetMin)
         timerRemainingMin = int(.timerRemainingMin)
         chromoColor = str(.chromoColor)
-        chromoCycle = bool(.chromoCycle)
-        footwell = bool(.footwell)
         unit = str(.unit) ?? "f"
         online = bool(.online)
         updatedAt = ((try? c.decodeIfPresent(Double.self, forKey: .updatedAt)) ?? nil) ?? 0
@@ -58,7 +54,11 @@ struct SaunaState: Codable, Equatable, Sendable {
     }
     private var currentWarm: Bool { (currentTempF ?? 0) > 90 }
 
-    /// 0…1 heat ratio for the gauge (75°F floor → target, capped at 175).
+    /// FD-5 lights are one enum (DP111) where "Off" is a value; they only run while powered.
+    var lightsOn: Bool { power && chromoColor != nil && chromoColor != ChromaPalette.off }
+    var lightsScrolling: Bool { power && chromoColor == ChromaPalette.scroll }
+
+    /// 0…1 heat ratio for the gauge (75°F floor → target, capped at 170).
     var heatRatio: Double {
         guard let cur = currentTempF else { return 0 }
         let floorF = 75.0, ceilF = Double(max(targetTempF ?? 150, 150))
@@ -74,7 +74,7 @@ struct SaunaState: Codable, Equatable, Sendable {
     static var sample: SaunaState {
         var s = SaunaState()
         s.power = true; s.heater = true; s.currentTempF = 129; s.targetTempF = 150
-        s.timerSetMin = 60; s.timerRemainingMin = 41; s.chromoColor = "mode"
+        s.timerSetMin = 60; s.timerRemainingMin = 41; s.chromoColor = "White"
         s.online = true; s.updatedAt = Date().timeIntervalSince1970
         return s
     }
@@ -87,8 +87,6 @@ struct ControlRequest: Encodable {
     var targetTempF: Int? = nil
     var timerMin: Int? = nil
     var chromoColor: String? = nil
-    var chromoCycle: Bool? = nil
-    var footwell: Bool? = nil
 }
 
 struct SessionResult: Decodable, Sendable {

@@ -1,3 +1,15 @@
+# IOS Sauna Controller
+
+An iPhone app plus a small home bridge for controlling a **Finnmark FD-5** (Tuya-based) infrared sauna.
+
+Based on [ember](https://github.com/mattsmcnulty/ember) by Matt McNulty (MIT license), which was
+built for a Sun Home Eclipse 2. The bridge (`emberd/`) and app (`ember/`) are remapped to the FD-5 —
+its DP map and hands-on test notes are in [`emberd/schema.json`](emberd/schema.json). The original
+README follows; its DP map and "hard parts" describe the Eclipse 2 (kept for reference in
+`emberd/schema-eclipse2.json`). `homebridge-ember/` has not been remapped yet.
+
+---
+
 <p align="center"><img src="docs/media/icon.png" width="104" alt="Ember app icon"><br/><b>Ember</b></p>
 
 **Local-first iOS control for an infrared sauna — live Lock-Screen temperature, one-screen

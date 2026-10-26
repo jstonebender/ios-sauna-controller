@@ -154,9 +154,9 @@ final class SaunaStore {
     /// "Start" powers on + heats; "Stop" turns the heater off.
     func start() async {
         Haptics.success()
-        // power on + heat, with white interior during preheat (color applied last so it sticks)
-        await control(.init(power: true, heater: true, chromoColor: "mode", footwell: true)) {
-            $0.power = true; $0.heater = true; $0.chromoColor = "mode"; $0.footwell = true
+        // power on + heat; the FD-5 turns its lights on White by itself at power-on
+        await control(.init(power: true, heater: true)) {
+            $0.power = true; $0.heater = true; $0.chromoColor = $0.lightsOn ? $0.chromoColor : "White"
         }
         await SaunaActivityController.shared.updateHeater(state.heater, state: state)  // preheat dial on the Lock Screen
     }
@@ -179,13 +179,11 @@ final class SaunaStore {
         await control(.init(timerMin: m)) { $0.timerSetMin = m; $0.timerRemainingMin = m }
     }
     func setChromo(_ v: String) async { Haptics.tap(); await control(.init(chromoColor: v)) { $0.chromoColor = v } }
-    func setChromoCycle(_ on: Bool) async { Haptics.tap(); await control(.init(chromoCycle: on)) { $0.chromoCycle = on } }
-    func setFootwell(_ on: Bool) async { Haptics.toggle(); await control(.init(footwell: on)) { $0.footwell = on } }
 
     /// Rapid +/- taps update the UI instantly but coalesce into one write, so they don't race
     /// each other (out-of-order responses used to make the value "not stick").
     func nudgeTarget(_ delta: Int) async {
-        let v = max(60, min(175, (state.targetTempF ?? 150) + delta))
+        let v = max(86, min(170, (state.targetTempF ?? 150) + delta))   // FD-5 setpoint range
         state.targetTempF = v          // optimistic, instant
         controlEpoch += 1               // invalidate any in-flight poll so it can't clobber this
         if !nudgeHoldsBusy {            // hold ONE busy increment across the whole adjust burst
@@ -205,10 +203,10 @@ final class SaunaStore {
         }
     }
 
-    /// The "Get In" scene: interior lights on, chromotherapy red (mode3), 25-minute timer.
+    /// The "Get In" scene: lights red, 25-minute timer.
     func getInScene() async {
-        await control(.init(timerMin: 25, chromoColor: "mode3", footwell: true)) {
-            $0.timerSetMin = 25; $0.chromoColor = "mode3"; $0.footwell = true
+        await control(.init(timerMin: 25, chromoColor: "Red")) {
+            $0.timerSetMin = 25; $0.chromoColor = "Red"
         }
     }
 

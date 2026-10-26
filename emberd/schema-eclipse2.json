@@ -1,0 +1,51 @@
+{
+  "_comment": "Sun Home Eclipse 2 DP map, reverse-engineered live in Phase 1 (2026-06-20). Device identity (devId/localKey/ip) lives in the gitignored options.json, not here.",
+  "protocol": "3.5",
+  "unit_default": "F",
+  "controls": {
+    "power": {
+      "dp": "110", "type": "bool_toggle", "writable": true, "status_dp": "20",
+      "note": "MOMENTARY TOGGLE: a write FLIPS power regardless of the value sent (a button press, not a level — in Phase 1 we only ever sent the opposite value so it looked like a level). Drive by desired state: read status from DP20, write only when it must change, else an already-on Start toggles the unit OFF. Interior LED comes on with power."
+    },
+    "heater": {
+      "dp": "114", "type": "bool_toggle", "writable": true,
+      "note": "MOMENTARY TOGGLE like power: a write flips the heater. Read DP114 for state; write only when it must change. The core heat control."
+    },
+    "target_temp_f": {
+      "dp": "106", "type": "int", "unit": "F", "writable": true,
+      "note": "Target setpoint in Fahrenheit. Firmware may clamp out-of-range values."
+    },
+    "timer_set_min": {
+      "dp": "116", "type": "int", "unit": "min", "writable": true,
+      "note": "Session duration. Writing it resets timer_remaining (105)."
+    },
+    "interior_lights": {
+      "dp": "113", "type": "bool", "writable": true,
+      "note": "Interior-lights master OVER LAN (2026-06-21): a network write to DP113 toggles ALL interior lights (ceiling chroma + footwell) together. The panel's dedicated footwell button also flips DP113 but only affects the footwell (hardware), so there is NO footwell-only control via the API. Chroma color (DP21) only renders while this is on. App exposes it as the 'Interior' toggle (state field still named 'footwell' internally — rename pending)."
+    },
+    "chromo_color": {
+      "dp": "21", "type": "enum_str", "writable": true,
+      "solids": {"mode": "white", "mode2": "yellow", "mode3": "red", "mode4": "pink", "mode5": "blue", "mode6": "teal", "mode7": "green"},
+      "note": "Interior ceiling LED color, mapped 2026-06-21 via the in-app debug screen. ONLY the 7 values above are solid colors; mode1 is a no-op and mode8/mode9 read back as white. The panel's color-button cycle order is NOT the same as the DP value order (that mismatch caused earlier confusion). Color only renders while interior lights (DP113) are on; the slow rainbow is DP101."
+    },
+    "chromo_cycle": {
+      "dp": "101", "type": "bool", "writable": true,
+      "note": "Slow morphing rainbow on the ceiling LED (mapped 2026-06-21). true=on; turning it off resets the LED to white (mode). Distinct from the panel's abrupt color-cycle scene, which maps to no DP we use (ignored as useless)."
+    }
+  },
+  "readonly": {
+    "current_temp_f": { "dp": "104", "type": "int", "unit": "F" },
+    "current_temp_c": { "dp": "103", "type": "int", "unit": "C", "note": "°C mirror of current temp" },
+    "target_temp_c":  { "dp": "109", "type": "int", "unit": "C", "note": "°C mirror of 106; syncs when powered" },
+    "timer_remaining_min": { "dp": "105", "type": "int", "unit": "min", "note": "Live countdown while powered." },
+    "power_status": { "dp": "20", "type": "bool", "note": "Canonical power on/off STATUS (read-only) — the real power state. DP110 is only the momentary toggle 'button'; read power from here. Lags a toggle by ~2s before settling." },
+    "unit": { "dp": "108", "type": "enum_str", "values": ["f", "c"], "note": "Display unit." }
+  },
+  "vestigial": {
+    "111": { "type": "int", "value_seen": 30, "note": "Bluetooth audio volume (default 30). Vestigial — the cabin BT speaker is unused (audio is via the Sonos Amp), so writes have no audible effect. Ignore." }
+  },
+  "not_controllable": {
+    "exterior_light": "Panel-only — toggling it at the panel changed NO DP, and DP writes don't drive it. ember cannot switch the exterior light.",
+    "interior_on_off_separate_from_color": "Chromo on/off appears scene/power-tied rather than a clean bool; control color via DP21 and the unit via power."
+  }
+}

@@ -1,4 +1,4 @@
-"""Sun Home Eclipse 2 client — sole owner of the single Tuya LAN connection.
+"""Finnmark FD-5 client — sole owner of the single Tuya LAN connection.
 
 All device I/O is serialized through one asyncio.Lock and pinned to a dedicated
 single-thread executor (tinytuya is synchronous and not thread-safe). A background
@@ -18,30 +18,27 @@ import tinytuya
 
 log = logging.getLogger("emberd.sauna")
 
-# Writable controls (DP numbers from schema.json).
-# NB: power (110), heater (114), footwell (113) and chromo-cycle (101) are *momentary
-# toggles* — a write flips the current state regardless of the value sent — so they go
-# through _set_bool (read current, write only when it must change). Power's real on/off
-# status is DP_POWER_STATUS (20); DP_POWER (110) is just the toggle "button".
-DP_POWER = "110"
-DP_HEATER = "114"
-DP_TARGET_F = "106"
-DP_TIMER_SET = "116"
-DP_FOOTWELL = "113"
-DP_CHROMO = "21"
-DP_CHROMO_CYCLE = "101"
+# Writable controls (DP numbers from schema.json, verified hands-on 2026-10-25).
+# Unlike the Sun Home Eclipse 2 that ember was built for, power and heater on the FD-5
+# are plain levels: writing true while already on leaves it on.
+DP_POWER = "102"
+DP_HEATER = "101"
+DP_TARGET_F = "107"
+DP_TIMER = "105"        # writable AND counts down while running (set == remaining)
+DP_LIGHT = "111"        # enum; only applies while powered on
+DP_UNIT_F = "109"       # true = °F
 # Read-only
-DP_POWER_STATUS = "20"
-DP_CURRENT_F = "104"
-DP_CURRENT_C = "103"
-DP_TARGET_C = "109"
-DP_TIMER_REMAINING = "105"
-DP_UNIT = "108"
+DP_CURRENT_F = "108"    # stale while powered off — see state()
+DP_CURRENT_C = "106"
+DP_TARGET_C = "104"
 
-CHROMO_VALUES = ["mode", "mode1", "mode2", "mode3", "mode4", "mode5", "mode6", "mode7", "mode8"]
+LIGHT_VALUES = ["White", "Purple", "Blue", "Cyan", "Green", "Yellow", "Red",
+                "Scroll", "Orange", "Magenta", "Off"]
+TARGET_F_RANGE = (86, 170)
+TIMER_RANGE = (0, 90)
 
 POLL_CEILING_SEC = 25.0          # keep well under the Tuya idle-drop (~30s); poll = keepalive
-STICKY_TTL_SEC = 8.0             # hold a commanded DP over lagging polls (DP20 trails ~2s)
+STICKY_TTL_SEC = 8.0             # hold a commanded DP over a lagging poll
 FATAL_ERR = "914"                # ERR_KEY_OR_VER — wrong localKey/protocol version
 
 
@@ -66,9 +63,8 @@ class SaunaClient:
         self._dev: Optional[tinytuya.Device] = None
         self._lock: Optional[asyncio.Lock] = None  # created in start() under the running loop
         self._raw: dict[str, Any] = {}
-        self._last_polled: dict[str, Any] = {}  # last DEVICE-reported frame (no overlay)
-        self._disagree_polls = 0  # consecutive polls with DP20 != DP110 (phantom detector)
         self._pending: dict[str, tuple[Any, float]] = {}  # dp -> (commanded value, expires_at)
+        self._timer_set: Optional[int] = None  # last commanded timer (the device only reports remaining)
         self._online = False
         self._updated = 0.0
         self._temp_history: list[tuple[float, int]] = []  # (ts, currentTempF)
@@ -125,12 +121,7 @@ class SaunaClient:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
         if self._lock is not None:
-            loop = asyncio.get_running_loop()
-            async with self._lock:
-                dev, self._dev = self._dev, None
-            if dev is not None:
-                with contextlib.suppress(Exception):
-                    await loop.run_in_executor(self._executor, dev.close)
+            await self._drop_connection()
         self._executor.shutdown(wait=False)
 
     async def _poll_loop(self):
@@ -143,110 +134,81 @@ class SaunaClient:
                 self._online = False
                 log.warning("poll error: %s", e)
             finally:
-                # This device's long-lived persistent socket drifts: it keeps handing back a
-                # stale/partial frame (temperature updates but power/heater freeze at an old
-                # value), so the cache silently diverges from reality. Drop the socket each
-                # cycle — the next status() reconnects and gets a clean, complete read. We
-                # never hold more than one connection, so the single-owner rule still holds.
+                # Fresh socket every cycle: on the Eclipse 2 a long-lived socket drifted
+                # stale, and reconnecting is cheap insurance on the FD-5 too. Still only
+                # ever one connection at a time.
                 with contextlib.suppress(Exception):
                     await self._drop_connection()
             await asyncio.sleep(self.poll_interval)
 
     # ---- state ----
-    async def refresh(self) -> dict:
+    async def _read_dps(self) -> dict:
+        """One fresh, successful status read merged into the cache — raises instead of
+        silently serving the cache, so write verification never runs on a failed read."""
         st = await self._io(lambda d: d.status())
         code = _err_code(st)
         if code:
             self._handle_error(code, st)
             await self._drop_connection()  # any device error → force reconnect
-            return self.state()
+            raise RuntimeError(f"device read failed (Err {code})")
         dps = st.get("dps") if isinstance(st, dict) else None
         if not dps:
             self._online = False
-            log.debug("status returned no dps: %s", st)
-            return self.state()
+            raise RuntimeError("device returned no dps")
         self._merge_polled(dps)
-        cf = self._raw.get(DP_CURRENT_F)
-        if isinstance(cf, int):
-            self._temp_history.append((self._updated, cf))
-            self._temp_history = self._temp_history[-5000:]
+        return dps
+
+    async def refresh(self) -> dict:
+        with contextlib.suppress(RuntimeError):
+            await self._read_dps()
         return self.state()
 
-    # DPs whose transitions are worth a forensic log line (name shown in the log).
-    _WATCHED_DPS = {"20": "powerStatus", "110": "powerToggle", "114": "heater",
-                    "113": "lights", "101": "rainbow", "116": "timerSet"}
-
     def _merge_polled(self, dps: dict) -> None:
-        """Merge a successful device frame into the cache — and log every transition of
-        a watched DP as the DEVICE reported it (vs the last device frame, so our own
-        sticky overlay can't pollute the diff). This is the forensic trail for the
-        phantom-DP20 problem: e.g. whether a panel power-off ever reports 20→False."""
-        for dp, name in self._WATCHED_DPS.items():
-            if dp in dps and dp in self._last_polled and dps[dp] != self._last_polled[dp]:
-                log.info("device: DP%s (%s) %s -> %s", dp, name, self._last_polled[dp], dps[dp])
-        self._last_polled.update(dps)
-        # Phantom detector: in every honest state observed, DP20 (power status) and
-        # DP110 (toggle readback) AGREE; in the captured phantom (2026-09-13) they
-        # disagreed (20=True, 110=False, cabin dark). Brief disagreement is normal
-        # mid-toggle, so only a sustained one is flagged.
-        if ("20" in self._last_polled and "110" in self._last_polled
-                and bool(self._last_polled["20"]) != bool(self._last_polled["110"])):
-            self._disagree_polls += 1
-            if self._disagree_polls == 3:
-                log.warning("DP20=%s vs DP110=%s for 3+ polls — possible phantom power "
-                            "status (start_heating self-recovers; raw DP110 toggle fixes manually)",
-                            self._last_polled["20"], self._last_polled["110"])
-        else:
-            self._disagree_polls = 0
+        if DP_POWER in dps and DP_POWER in self._raw and dps[DP_POWER] != self._raw[DP_POWER]:
+            log.info("device: power %s -> %s", self._raw[DP_POWER], dps[DP_POWER])
+            if not dps[DP_POWER]:
+                self._timer_set = None  # the device resets its timer on the next power-on
         self._raw.update(dps)
         self._apply_pending(dps)
         self._online = True
         self._updated = time.time()
-
-    @staticmethod
-    def _power_from(dps: dict) -> bool:
-        """The trustworthy power state. DP20 is the nominal status but has been caught
-        STUCK in both directions (phantom-on 2026-09-13, phantom-off 2026-09-20) while
-        DP110's readback tracked the real cabin state in every captured incident —
-        including panel-initiated changes. Honest states have them agreeing; on
-        disagreement, DP110 wins."""
-        p20, p110 = dps.get(DP_POWER_STATUS), dps.get(DP_POWER)
-        if p110 is not None and p20 is not None and bool(p20) != bool(p110):
-            return bool(p110)
-        return bool(p20) if p20 is not None else bool(p110)
+        cf = self.state()["currentTempF"]
+        if isinstance(cf, int):
+            self._temp_history.append((self._updated, cf))
+            self._temp_history = self._temp_history[-5000:]
 
     def state(self) -> dict:
         r = self._raw
+        power = bool(r.get(DP_POWER, False))
+        # The FD-5 keeps reporting the last session's temperature while powered off
+        # (read 156°F in a cool cabin), so only trust it while on.
+        cur_f = r.get(DP_CURRENT_F) if power else None
+        cur_c = r.get(DP_CURRENT_C) if power else None
+        remaining = r.get(DP_TIMER)
         return {
-            "power": self._power_from(r),
+            "power": power,
             "heater": bool(r.get(DP_HEATER, False)),
-            "currentTempF": r.get(DP_CURRENT_F),
-            "currentTempC": r.get(DP_CURRENT_C),
+            "currentTempF": cur_f,
+            "currentTempC": cur_c,
             "targetTempF": r.get(DP_TARGET_F),
             "targetTempC": r.get(DP_TARGET_C),
-            "timerSetMin": r.get(DP_TIMER_SET),
-            "timerRemainingMin": r.get(DP_TIMER_REMAINING),
-            "chromoColor": r.get(DP_CHROMO),
-            "chromoCycle": bool(r.get(DP_CHROMO_CYCLE, False)),
-            "footwell": bool(r.get(DP_FOOTWELL, False)),
-            "unit": r.get(DP_UNIT, "f"),
+            "timerSetMin": self._timer_set,
+            "timerRemainingMin": remaining if power else None,
+            "chromoColor": r.get(DP_LIGHT) if power else "Off",
+            "unit": "f" if r.get(DP_UNIT_F, True) else "c",
             "online": self._online,
             "updatedAt": self._updated,
         }
 
     def _stick(self, dp: str, value: Any, ttl: float = STICKY_TTL_SEC) -> None:
-        """Reflect a just-commanded DP onto the cache and hold it over lagging polls.
-        A status DP can trail its toggle by a beat (power's DP20 lags ~2s), so a poll
-        landing in that window would revert the value and flicker every client. The
-        pending entry is dropped as soon as the device confirms it — or after the TTL,
-        so a write that didn't actually take still reconciles to reality."""
+        """Reflect a just-commanded DP onto the cache and hold it over a lagging poll.
+        Dropped as soon as the device confirms it, or after the TTL so a write that
+        didn't take still reconciles to reality."""
         self._raw[str(dp)] = value
         self._pending[str(dp)] = (value, time.time() + ttl)
         self._updated = time.time()
 
     def _apply_pending(self, polled: dict) -> None:
-        """After a poll merges device DPs: re-assert commanded values the device hasn't
-        caught up to yet; forget ones it confirmed or that expired (device wins)."""
         now = time.time()
         for dp, (val, exp) in list(self._pending.items()):
             if (dp in polled and polled[dp] == val) or now >= exp:
@@ -254,15 +216,12 @@ class SaunaClient:
             else:
                 self._raw[dp] = val
 
-    def overlay_bools(self, *, power=None, heater=None, footwell=None, chromo_cycle=None) -> None:
-        """Stick just-commanded toggle states onto the cache so neither the immediate
-        /control response nor the next few polls are transiently stale (see _stick).
-        Booleans only — no clamping risk (target/timer keep the device's actual,
-        possibly clamped, value)."""
-        for dp, v in ((DP_POWER_STATUS, power), (DP_HEATER, heater),
-                      (DP_FOOTWELL, footwell), (DP_CHROMO_CYCLE, chromo_cycle)):
+    def overlay_bools(self, *, power=None, heater=None) -> None:
+        """Stick just-commanded power/heater onto the cache so the /control response
+        and the next poll aren't transiently stale."""
+        for dp, v in ((DP_POWER, power), (DP_HEATER, heater)):
             if v is not None:
-                self._stick(dp, v)
+                self._stick(dp, bool(v))
 
     def peak_since(self, ts: float) -> Optional[int]:
         hist = list(self._temp_history)  # snapshot — poll loop may append concurrently
@@ -277,137 +236,55 @@ class SaunaClient:
             self._handle_error(code, st)
             await self._drop_connection()
             raise RuntimeError(f"device rejected write (Err {code})")
-        # the device's status right after a write is often stale/partial, so trust the
-        # accepted write for the immediate response; the background poll reconciles.
-        await asyncio.sleep(0.3)
-        await self.refresh()
         self._stick(dp, value)
         return self.state()
 
-    async def _read_dps(self) -> dict:
-        """One fresh, successful status read — raises instead of silently serving the
-        cache. Toggle decisions must never run on stale/failed reads: deciding "already
-        on" from a lie is exactly how a Start becomes a silent no-op."""
-        st = await self._io(lambda d: d.status())
-        code = _err_code(st)
-        if code:
-            self._handle_error(code, st)
-            await self._drop_connection()
-            raise RuntimeError(f"device read failed (Err {code})")
-        dps = st.get("dps") if isinstance(st, dict) else None
-        if not dps:
-            raise RuntimeError("device returned no dps")
-        self._merge_polled(dps)
-        return dps
-
-    async def _await_status(self, watch: tuple, desired: bool,
-                            delays: tuple = (0.5, 1.0, 1.5, 2.0)) -> Optional[bool]:
-        """Watch status DPs (raw frames, bypassing the sticky overlay) until ANY reports
-        `desired` or the budget runs out. Returns True on confirm, False if the device
-        definitively reported only the wrong value, None if it never answered usably.
-        Power passes both DP20 and DP110: either one reflecting the command counts,
-        because DP20 has been caught stuck in both directions while DP110 tracked truth."""
-        seen: Optional[bool] = None
-        for delay in delays:
+    async def _set_verified(self, dp: str, value: Any) -> dict:
+        """Write, then confirm the device actually reports the value. The FD-5 silently
+        ignores some writes (e.g. a light color while powered off) — fail loudly rather
+        than report phantom success."""
+        await self.set_dp(dp, value)
+        for delay in (0.5, 1.0, 1.5):
             await asyncio.sleep(delay)
-            try:
+            with contextlib.suppress(RuntimeError):
                 dps = await self._read_dps()
-            except Exception:
-                continue  # transient — keep waiting within the budget
-            for dp in watch:
-                if dp in dps:
-                    seen = bool(dps[dp])
-                    if seen == desired:
-                        return True
-        return None if seen is None else False
+                if dps.get(dp) == value:
+                    return self.state()
+        raise RuntimeError(f"device did not apply DP{dp}={value!r}")
 
-    async def _set_bool(self, write_dp: str, status_dp: str, desired: bool,
-                        quick: bool = False) -> dict:
-        """Toggle-style controls: a write flips the current state regardless of the value
-        sent, so read first and only write on a mismatch. The module's LAN side has been
-        caught ACKing writes without executing them, so the write is VERIFIED against the
-        status DP and a miss raises instead of returning phantom success.
-
-        ONE attempt per request, deliberately: observed 2026-08-16, back-to-back
-        in-request retries fail together while a fresh attempt ~10s later succeeds —
-        the module recovers on a ~10s scale. Failing fast (~8s) keeps every /control
-        inside client timeout budgets; the clients own the spaced retries.
-        `quick` shortens the verify budget (start_heating's recovery attempts, so the
-        whole recovery sequence stays inside the clients' 30s)."""
-        is_power = write_dp == DP_POWER
-        dps = await self._read_dps()
-        current = self._power_from(dps) if is_power else bool(dps.get(status_dp, False))
-        if current == desired:
-            return self.state()
-        await self.set_dp(write_dp, desired)  # flips it to `desired`
-        if status_dp != write_dp:
-            self._stick(status_dp, desired)
-        watch = (status_dp, write_dp) if is_power else (status_dp,)
-        confirmed = await self._await_status(watch, desired,
-                                             delays=(0.5, 1.0, 1.5) if quick else (0.5, 1.0, 1.5, 2.0))
-        if confirmed:
-            return self.state()
-        log.warning("DP%s write not reflected on DP%s — failing fast for a spaced client retry",
-                    write_dp, status_dp)
-        raise RuntimeError(f"device did not execute the DP{write_dp} command")
-
-    async def set_power(self, on: bool):
-        return await self._set_bool(DP_POWER, DP_POWER_STATUS, bool(on))
-
-    async def start_heating(self) -> dict:
-        """Power + heater ON as ONE intent, with phantom-status recovery.
-
-        Live-captured 2026-09-13: after long idle the module can report DP20=True
-        while the cabin is physically off (raw: 20=True, 110=False). A naive start
-        then SKIPS the power toggle ("already on") and the heater write cannot
-        execute — no cabin power — so every Start fails until something toggles
-        power for real. Because this intent's end state is fully known, corrective
-        power toggles are CONVERGENT:
-          - phantom-on (cabin off): toggle → cabin on → heater verifies ✓
-          - genuinely on (heater merely flaked): toggle → cabin off → heater fails
-            → second toggle → cabin back on → heater verifies ✓
-        Either way we end powered + heating, or raise honestly."""
-        dps = await self._read_dps()
-        if not self._power_from(dps):
-            # reports off (by the trustworthy composite): verified power-on, then heater
-            await self._set_bool(DP_POWER, DP_POWER_STATUS, True)
-            return await self._set_bool(DP_HEATER, DP_HEATER, True)
-        # reports on — possibly phantom; prove it with the heater, recover with toggles
-        last_err: Optional[Exception] = None
-        for attempt in range(3):
-            try:
-                return await self._set_bool(DP_HEATER, DP_HEATER, True, quick=attempt > 0)
-            except RuntimeError as e:
-                last_err = e
-                if attempt == 2:
-                    break
-                log.warning("heater won't execute while DP20 claims power on — possible "
-                            "phantom status; corrective power toggle %d/2", attempt + 1)
-                await self.set_dp(DP_POWER, True)  # momentary toggle: flips the REAL state
-                self._stick(DP_POWER_STATUS, True)
-        raise RuntimeError(f"could not start heating: {last_err}")
-
-    async def set_heater(self, on: bool):
-        return await self._set_bool(DP_HEATER, DP_HEATER, bool(on))
-
-    async def set_target_temp(self, temp_f: int):
-        return await self.set_dp(DP_TARGET_F, int(temp_f))
-
-    async def set_timer(self, minutes: int):
-        st = await self.set_dp(DP_TIMER_SET, int(minutes))
-        if minutes > 0:
-            # remaining (DP105) trails a timer set by a poll; reflect it immediately
-            self._stick(DP_TIMER_REMAINING, int(minutes))
+    async def set_power(self, on: bool) -> dict:
+        st = await self._set_verified(DP_POWER, bool(on))
+        if not on:
+            self._timer_set = None  # the device resets its timer on the next power-on
             st = self.state()
         return st
 
-    async def set_chromo_color(self, value: str):
-        if value not in CHROMO_VALUES:
-            raise ValueError(f"chromoColor must be one of {CHROMO_VALUES}")
-        return await self.set_dp(DP_CHROMO, value)
+    async def start_heating(self) -> dict:
+        """Power + heater on as one intent. Power-on resets the timer to 80 min and the
+        lights to White, so callers apply their timer/color after this."""
+        if not self._raw.get(DP_POWER):
+            await self.set_power(True)
+        return await self.set_heater(True)
 
-    async def set_chromo_cycle(self, on: bool):
-        return await self._set_bool(DP_CHROMO_CYCLE, DP_CHROMO_CYCLE, bool(on))
+    async def set_heater(self, on: bool) -> dict:
+        if on and not self._raw.get(DP_POWER):
+            raise ValueError("power the sauna on before heating")
+        return await self._set_verified(DP_HEATER, bool(on))
 
-    async def set_footwell(self, on: bool):
-        return await self._set_bool(DP_FOOTWELL, DP_FOOTWELL, bool(on))
+    async def set_target_temp(self, temp_f: int) -> dict:
+        lo, hi = TARGET_F_RANGE
+        return await self._set_verified(DP_TARGET_F, max(lo, min(hi, int(temp_f))))
+
+    async def set_timer(self, minutes: int) -> dict:
+        lo, hi = TIMER_RANGE
+        minutes = max(lo, min(hi, int(minutes)))
+        await self._set_verified(DP_TIMER, minutes)
+        self._timer_set = minutes or None
+        return self.state()
+
+    async def set_light(self, value: str) -> dict:
+        if value not in LIGHT_VALUES:
+            raise ValueError(f"chromoColor must be one of {LIGHT_VALUES}")
+        if not self._raw.get(DP_POWER):
+            raise ValueError("power the sauna on before changing the lights")
+        return await self._set_verified(DP_LIGHT, value)

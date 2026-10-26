@@ -1,4 +1,4 @@
-"""emberd — local bridge for the Sun Home Eclipse 2.
+"""emberd — local bridge for the Finnmark FD-5 infrared sauna.
 
 Owns the single Tuya LAN connection (sauna.py), exposes a small HTTP API for the
 ember iOS app, controls the 'Sauna' Sonos (sonos.py), and pushes Live Activity
@@ -45,11 +45,9 @@ KEEPALIVE_SEC = 90  # re-push before the Live Activity goes stale, even if temp 
 class ControlBody(BaseModel):
     power: Optional[bool] = None
     heater: Optional[bool] = None
-    targetTempF: Optional[int] = Field(None, ge=60, le=175)   # Eclipse 2 tops out ~165°F
-    timerMin: Optional[int] = Field(None, ge=0, le=360)
-    chromoColor: Optional[str] = None
-    chromoCycle: Optional[bool] = None
-    footwell: Optional[bool] = None
+    targetTempF: Optional[int] = Field(None, ge=86, le=170)   # FD-5 setpoint range
+    timerMin: Optional[int] = Field(None, ge=0, le=90)
+    chromoColor: Optional[str] = None   # FD-5 light: White, Red, …, Scroll, Off
 
 
 class AudioBody(BaseModel):
@@ -164,8 +162,9 @@ async def control(body: ControlBody):
     st = sauna.state()
     try:
         started = body.power is True and body.heater is True
+        # power first: powering on resets the timer to 80 min and the lights to White,
+        # so the timer/color in the same request must land after it
         if started:
-            # a Start intent: one convergent sequence with phantom-DP20 recovery
             st = await sauna.start_heating()
         elif body.power is not None:
             st = await sauna.set_power(body.power)
@@ -175,22 +174,16 @@ async def control(body: ControlBody):
             st = await sauna.set_timer(body.timerMin)
         if body.heater is not None and not started:
             st = await sauna.set_heater(body.heater)
-        if body.footwell is not None:
-            st = await sauna.set_footwell(body.footwell)
-        if body.chromoCycle is not None:
-            st = await sauna.set_chromo_cycle(body.chromoCycle)
         if body.chromoColor is not None:
-            # color LAST: interior lights (DP113) must be on first, else turning them on resets to white
-            st = await sauna.set_chromo_color(body.chromoColor)
+            st = await sauna.set_light(body.chromoColor)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception:
         log.exception("control failed")
         raise HTTPException(502, "sauna control failed")
-    # reflect commanded toggles so the response isn't transiently stale from a lagging
-    # status DP (e.g. power's DP20); the poll reconciles real device state.
-    sauna.overlay_bools(power=body.power, heater=body.heater,
-                        footwell=body.footwell, chromo_cycle=body.chromoCycle)
+    # reflect commanded power/heater so the response isn't transiently stale;
+    # the poll reconciles real device state.
+    sauna.overlay_bools(power=body.power, heater=body.heater)
     return sauna.state()
 
 
@@ -329,10 +322,10 @@ async def _stop_sauna(reason: str):
 
 async def _heater_watchdog():
     """Two safety checks every 30s:
-    - timer expiry: the device's own timer reaching 0 has not reliably shut the heater
-      off (observed 2026-09-20), so emberd enforces it — after two consecutive ticks
-      (60s) of heater-on with a timer set and 0 remaining, to ride out the device's
-      lag right after a timer is (re)set.
+    - timer expiry: belt-and-braces in case the device's own timer reaching 0 doesn't
+      shut the heater off (it didn't on the Eclipse 2) — after two consecutive ticks
+      (60s) of heater-on with 0 minutes remaining, to ride out the device's lag right
+      after a timer is (re)set.
     - deadman: heater on longer than server.heaterMaxOnMinutes (if configured)."""
     global _heater_on_since
     expired_ticks = 0
@@ -345,7 +338,7 @@ async def _heater_watchdog():
                 _heater_on_since = None
                 expired_ticks = 0
                 continue
-            if (st.get("timerSetMin") or 0) > 0 and st.get("timerRemainingMin") == 0:
+            if st.get("timerRemainingMin") == 0:
                 expired_ticks += 1
                 if expired_ticks >= 2:
                     await _stop_sauna("timer reached 0 with the heater still on")

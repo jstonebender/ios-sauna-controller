@@ -29,11 +29,11 @@ struct ControlView: View {
 /// (bumped by every poll — animating on the whole state re-ran a 0.35s transaction
 /// across the screen every 2s) and `timerRemainingMin` (the countdown self-ticks).
 private struct VisualKey: Equatable {
-    let power: Bool, heater: Bool, chromoCycle: Bool, footwell: Bool
+    let power: Bool, heater: Bool
     let currentTempF: Int?, targetTempF: Int?, timerSetMin: Int?
     let chromoColor: String?
     init(_ s: SaunaState) {
-        power = s.power; heater = s.heater; chromoCycle = s.chromoCycle; footwell = s.footwell
+        power = s.power; heater = s.heater
         currentTempF = s.currentTempF; targetTempF = s.targetTempF
         timerSetMin = s.timerSetMin; chromoColor = s.chromoColor
     }
@@ -75,7 +75,7 @@ private struct ConnectionBar: View {
 private struct HeroGauge: View {
     let state: SaunaState
     private let sweep = 0.75            // 270°
-    private let floorF = 75.0, ceilF = 175.0
+    private let floorF = 75.0, ceilF = 170.0   // FD-5 max setpoint
 
     private func frac(_ f: Int?) -> Double {
         guard let f else { return 0 }
@@ -265,11 +265,20 @@ private struct LightsCard: View {
     let state: SaunaState
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Lighting", systemImage: "lightbulb.led").foregroundStyle(Theme.textSecondary)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-            HStack(spacing: 7) {
+            HStack {
+                Label("Lighting", systemImage: "lightbulb.led").foregroundStyle(Theme.textSecondary)
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                Spacer()
+                if !state.power {
+                    // the FD-5 ignores light changes while powered off
+                    Text("Turn the sauna on first")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            HStack(spacing: 6) {
                 ForEach(ChromaPalette.solids, id: \.value) { c in
-                    let on = state.chromoColor == c.value && !state.chromoCycle
+                    let on = state.lightsOn && state.chromoColor == c.value
                     Button { Task { await store.setChromo(c.value) } } label: {
                         Capsule().fill(c.color)
                             .frame(maxWidth: .infinity)
@@ -280,16 +289,20 @@ private struct LightsCard: View {
                 }
             }
             HStack(spacing: 10) {
-                Toggle(isOn: Binding(get: { state.chromoCycle }, set: { v in Task { await store.setChromoCycle(v) } })) {
-                    Label("Rainbow", systemImage: "sparkles")
+                Toggle(isOn: Binding(get: { state.lightsScrolling },
+                                     set: { v in Task { await store.setChromo(v ? ChromaPalette.scroll : "White") } })) {
+                    Label("Cycle", systemImage: "sparkles")
                 }
                 .toggleStyle(PillToggle())
-                Toggle(isOn: Binding(get: { state.footwell }, set: { v in Task { await store.setFootwell(v) } })) {
-                    Label("Interior", systemImage: "lightbulb.fill")
+                Toggle(isOn: Binding(get: { state.lightsOn },
+                                     set: { v in Task { await store.setChromo(v ? "White" : ChromaPalette.off) } })) {
+                    Label("Lights", systemImage: "lightbulb.fill")
                 }
                 .toggleStyle(PillToggle())
             }
         }
+        .disabled(!state.power)
+        .opacity(state.power ? 1 : 0.5)
         .glassCard()
     }
 }

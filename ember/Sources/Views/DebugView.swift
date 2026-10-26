@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Temporary DP playground: shows every raw DP live and lets you set anything.
-/// Use it to verify mappings (chroma modes, footwell, etc.) by poking + watching.
+/// Use it to verify mappings (light colors, timer, etc.) by poking + watching.
 struct DebugView: View {
     @Environment(AppSettings.self) private var settings
     @State private var raw: [String: String] = [:]
@@ -28,20 +28,18 @@ struct DebugView: View {
                 }
             }
 
-            Section("Chroma color (DP 21)") {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 8) {
-                    ForEach(0...9, id: \.self) { i in
-                        let v = i == 0 ? "mode" : "mode\(i)"
-                        Button("m\(i)") { set("21", .str(v)) }.buttonStyle(.bordered)
+            Section("Light color (DP 111)") {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
+                    ForEach(ChromaPalette.solids.map(\.value) + [ChromaPalette.scroll, ChromaPalette.off], id: \.self) { v in
+                        Button(v) { set("111", .str(v)) }.buttonStyle(.bordered).font(.caption)
                     }
                 }
             }
 
             Section("Toggles") {
-                toggleRow("Power", "110")
-                toggleRow("Heater", "114")
-                toggleRow("Footwell", "113")
-                toggleRow("Rainbow/cycle", "101")
+                toggleRow("Power", "102")
+                toggleRow("Heater", "101")
+                toggleRow("°F display", "109")
             }
 
             Section("Set any DP") {
