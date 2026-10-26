@@ -3,10 +3,10 @@
 An iPhone app plus a small home bridge for controlling a **Finnmark FD-5** (Tuya-based) infrared sauna.
 
 Based on [ember](https://github.com/mattsmcnulty/ember) by Matt McNulty (MIT license), which was
-built for a Sun Home Eclipse 2. The bridge (`emberd/`) and app (`ember/`) are remapped to the FD-5 —
-its DP map and hands-on test notes are in [`emberd/schema.json`](emberd/schema.json). The original
+built for a Sun Home Eclipse 2. The bridge (`saunad/`) and app (`app/`) are remapped to the FD-5 —
+its DP map and hands-on test notes are in [`saunad/schema.json`](saunad/schema.json). The original
 README follows; its DP map and "hard parts" describe the Eclipse 2 (kept for reference in
-`emberd/schema-eclipse2.json`). `homebridge-ember/` has not been remapped yet.
+`saunad/schema-eclipse2.json`). `homebridge-sauna/` has not been remapped yet.
 
 ---
 
@@ -60,11 +60,11 @@ background temperature push rides the internet (via Apple's APNs).
 ## Architecture
 
 Three components (plus an optional HomeKit face). The iOS app **never speaks Tuya** — it only
-talks to `emberd` over HTTP.
+talks to `saunad` over HTTP.
 
 ```
 ┌────────────┐   HTTP/JSON over the LAN              ┌─────────────────────┐  Tuya LAN v3.5   ┌──────────┐
-│  ember     │  GET /state   POST /control           │  emberd             │  TCP 6668        │  Sauna   │
+│  ember     │  GET /state   POST /control           │  saunad             │  TCP 6668        │  Sauna   │
 │  iOS app   │ ───────────────────────────────────▶  │  Python on an       │  (single conn,   │  Tuya    │
 │ (SwiftUI)  │ ◀───────────────────────────────────  │  always-on box      │  reconnect/poll) │  ESP32   │
 └────┬───────┘   POST /activity/token (push token)    └──────────┬──────────┘ ───────────────▶ │ @ .1.12  │
@@ -75,23 +75,23 @@ talks to `emberd` over HTTP.
   On-device session counter (Text(timerInterval:)) — self-updating, no network
 ```
 
-- **`ember/`** — SwiftUI app (iOS 26, Swift 6). Talks only to emberd; renders the Live Activity.
-- **`emberd/`** — Python (FastAPI + [tinytuya](https://github.com/jasonacox/tinytuya)) bridge on
+- **`app/`** — SwiftUI app (iOS 26, Swift 6). Talks only to saunad; renders the Live Activity.
+- **`saunad/`** — Python (FastAPI + [tinytuya](https://github.com/jasonacox/tinytuya)) bridge on
   any always-on box — Raspberry Pi (systemd/Docker) or a Mac mini (launchd). **Sole owner** of
   the sauna's single Tuya LAN socket; exposes a small HTTP API; pushes Live Activity updates via
   APNs; controls the cabin **Sonos** ("Sauna") via `soco`.
-  Full setup + API in [`emberd/README.md`](emberd/README.md).
-- **`homebridge-ember/`** — a zero-dependency TypeScript **Homebridge plugin** that puts the
+  Full setup + API in [`saunad/README.md`](saunad/README.md).
+- **`homebridge-sauna/`** — a zero-dependency TypeScript **Homebridge plugin** that puts the
   sauna in **HomeKit**: a thermostat tile (60–175 °F), interior lights whose color picks snap
   to the sauna's 7 real chroma solids, and a power switch — Siri, scenes, automations, and
-  (with a home hub) remote control, all as just **another HTTP client of emberd**.
-  See [`homebridge-ember/README.md`](homebridge-ember/README.md).
+  (with a home hub) remote control, all as just **another HTTP client of saunad**.
+  See [`homebridge-sauna/README.md`](homebridge-sauna/README.md).
 - **The sauna** — a Tuya Wi-Fi controller speaking the **Tuya LAN protocol v3.5** (AES-GCM,
   session-key handshake), on TCP port 6668.
 
 **Why a bridge at all:** iOS won't let an app poll a LAN device in the background often enough
 to drive a live readout, and APNs (the only reliable background path for a Live Activity) can't
-be reached peer-to-peer on the LAN. emberd polls the sauna and pushes updates — and because the
+be reached peer-to-peer on the LAN. saunad polls the sauna and pushes updates — and because the
 device allows **only one** local connection at a time, having a single always-on owner is
 mandatory, not optional. It also keeps the shipped app pure-Swift with **no Tuya crypto**.
 
@@ -111,27 +111,27 @@ key out of runtime memory — **no re-pair**, so the OEM account/app stayed inta
 
 ### 2. Tuya LAN protocol v3.5
 v3.5 isn't the simpler 3.3 — it does an AES-GCM session-key handshake. `tinytuya` handles it,
-but it means emberd must hold a live, authenticated socket and can't just fire-and-forget.
+but it means saunad must hold a live, authenticated socket and can't just fire-and-forget.
 
 ### 3. The device lies about its own state (momentary toggles)
 **`power` (DP110) and `heater` (DP114) are momentary toggles, not levels** — *writing* them
 flips the current state regardless of the value sent. In early mapping we only ever sent the
 opposite value, so they looked like normal booleans. The bug surfaced as "tap **Start** → sauna
 turns *off*": Start sent `power: true` while power was already on, which toggled it off. Fix:
-emberd drives by **desired state** — it reads the real status (`power`'s true status is the
+saunad drives by **desired state** — it reads the real status (`power`'s true status is the
 read-only **DP20**, not DP110) and only writes when the state must change.
 
 ### 4. The persistent socket drifts stale
 A long-lived Tuya socket on this device starts returning **stale/partial frames** — the
 temperature would update while `power`/`heater` froze at an old value, so the app faithfully
 showed "off" while the sauna was on and heating. A *fresh* connection always reads correctly,
-so emberd now **reconnects every poll** (still single-owner, never two sockets at once).
+so saunad now **reconnects every poll** (still single-owner, never two sockets at once).
 
 ### 5. Poll-vs-control races
 The app polls `/state` every 2 s and also issues optimistic control writes. A poll already in
 flight when you tapped a button would land a beat later and overwrite the fresh result with
 stale data. Fixed with a **control epoch** (a poll whose epoch changed mid-flight is discarded)
-plus a **busy guard** and emberd **optimistically reflecting accepted writes** so `/control`
+plus a **busy guard** and saunad **optimistically reflecting accepted writes** so `/control`
 never returns a transiently-stale value.
 
 ### 6. The chromotherapy palette: panel order ≠ DP values
@@ -158,13 +158,13 @@ annotate directly. That's how the palette, DP113, and the toggle behavior were n
 
 Also handled along the way: APNs token-auth Live Activities (`.p8` / ES256 JWT, per-activity +
 push-to-start tokens), Swift 6 strict-concurrency around ActivityKit, and a heater "deadman"
-safety option in emberd.
+safety option in saunad.
 
 ---
 
 ## DP map (reference)
 
-Verified live, 2026-06. Full detail + types in [`emberd/schema.json`](emberd/schema.json).
+Verified live, 2026-06. Full detail + types in [`saunad/schema.json`](saunad/schema.json).
 
 | DP | Meaning | Type | Notes |
 |---|---|---|---|
@@ -187,33 +187,33 @@ Verified live, 2026-06. Full detail + types in [`emberd/schema.json`](emberd/sch
 ## Repo layout
 
 ```
-ember/                         # iOS app (SwiftUI, iOS 26, Swift 6) — xcodegen project
+app/                           # iOS app (SwiftUI, iOS 26, Swift 6) — xcodegen project
 ├── project.yml                #   xcodegen spec (targets, signing, entitlements)
 ├── Sources/
-│   ├── App/emberApp.swift
+│   ├── App/SaunaControllerApp.swift
 │   ├── Views/                 #   RootTabView (Control · Log · Debug), Control/Log/Settings/DebugView
 │   ├── Models/                #   SaunaState, SaunaStore (@Observable polling + optimistic + epoch guard),
 │   │                          #   AppSettings (UserDefaults), SaunaSession (SwiftData)
-│   ├── Net/EmberClient.swift  #   async URLSession client to emberd
+│   ├── Net/BridgeClient.swift  #   async URLSession client to saunad
 │   ├── Activity/              #   SaunaActivityController — Live Activity + APNs token registration
 │   ├── Health/                #   HealthKitManager (HKWorkout)
 │   └── Design/Theme.swift     #   warm dark design system
 ├── Shared/                    #   SaunaActivityAttributes (ContentState), ChromaPalette  (app + widget)
-├── Widget/emberWidget.swift   #   Live Activity UI (Lock Screen + Dynamic Island)
+├── Widget/SaunaControllerWidget.swift   #   Live Activity UI (Lock Screen + Dynamic Island)
 └── Assets.xcassets            #   AppIcon
 
-emberd/                        # Python bridge (FastAPI + tinytuya + soco + APNs) — see emberd/README.md
+saunad/                        # Python bridge (FastAPI + tinytuya + soco + APNs) — see saunad/README.md
 ├── app.py  sauna.py  apns.py  sonos.py  config.py  schema.json
 ├── options.example.json       #   template; real options.json (localKey, apiKey, APNs) is gitignored
 └── deploy/                     #   install-native.sh (Linux systemd) + install-macos.sh (launchd)
 
-homebridge-ember/              # HomeKit via Homebridge (TypeScript) — see homebridge-ember/README.md
+homebridge-sauna/              # HomeKit via Homebridge (TypeScript) — see homebridge-sauna/README.md
 ├── src/                       #   platform + thermostat / lights (color-snap) / power accessories
 └── config.schema.json         #   Homebridge UI settings form
 ```
 
 Secrets — the `localKey`, the server `apiKey`, and the APNs `.p8` — live in **gitignored**
-files (`emberd/options.json`, `tools/phase0/devices.json`, `*.p8`). Never committed.
+files (`saunad/options.json`, `tools/phase0/devices.json`, `*.p8`). Never committed.
 
 ---
 
@@ -237,32 +237,32 @@ The `localKey` **rotates** on re-pair (and sometimes after firmware updates) —
 suddenly breaks, re-extract it. The reverse-engineering scratch (`tools/phase0/`) is gitignored
 and ships with nothing; the steps above don't depend on it.
 
-### emberd (the bridge)
-See [`emberd/README.md`](emberd/README.md). Short version: copy `emberd/` to your always-on box,
+### saunad (the bridge)
+See [`saunad/README.md`](saunad/README.md). Short version: copy `saunad/` to your always-on box,
 fill in `options.json` (`sauna.devId` / `sauna.localKey`, a long random `server.apiKey`, and
 optionally the APNs block), then `sudo bash deploy/install-native.sh` (Linux/systemd) or
 `sudo bash deploy/install-macos.sh` (macOS/launchd), and `curl http://localhost:8765/state`.
 
 ### HomeKit (optional)
-If you run [Homebridge](https://homebridge.io), `homebridge-ember/` adds the sauna to the Home
+If you run [Homebridge](https://homebridge.io), `homebridge-sauna/` adds the sauna to the Home
 app — thermostat, lights with color snapping, power switch, Siri, automations. Build + install
-from the packed tarball; see [`homebridge-ember/README.md`](homebridge-ember/README.md)
+from the packed tarball; see [`homebridge-sauna/README.md`](homebridge-sauna/README.md)
 (including the heater-safety note about `server.heaterMaxOnMinutes`).
 
-### ember (the iOS app)
+### Sauna Controller (the iOS app)
 Requires Xcode 26, [xcodegen](https://github.com/yonaskolb/XcodeGen), and an Apple Developer
 account (for on-device runs + APNs). The `.xcodeproj` is generated (gitignored).
 
 ```bash
-cd ember
-cp Local.example.xcconfig Local.xcconfig    # optional: bake your emberd URL + apiKey in as defaults (gitignored)
+cd app
+cp Local.example.xcconfig Local.xcconfig    # optional: bake your saunad URL + apiKey in as defaults (gitignored)
 export DEVELOPMENT_TEAM=YOURTEAMID          # your Apple Developer Team ID — xcodegen reads it
 xcodegen generate
 # build + install to a connected, Developer-Mode-enabled iPhone (automatic signing):
 # (find your device id with:  xcrun devicectl list devices)
-xcodebuild -project ember.xcodeproj -scheme ember \
+xcodebuild -project SaunaController.xcodeproj -scheme SaunaController \
   -destination 'platform=iOS,id=<DEVICE_UDID>' -allowProvisioningUpdates -derivedDataPath build build
-xcrun devicectl device install app --device <DEVICE_ID> build/Build/Products/Debug-iphoneos/ember.app
+xcrun devicectl device install app --device <DEVICE_ID> build/Build/Products/Debug-iphoneos/SaunaController.app
 ```
 
 **Build it yourself:** set `DEVELOPMENT_TEAM` (above — add it to your shell profile or use direnv
@@ -271,7 +271,7 @@ own reverse-domain). Then sign into your Apple ID in Xcode, enable **Developer M
 (Settings → Privacy & Security), and trust the developer profile.
 
 Point the app at your bridge **either** by copying `Local.example.xcconfig` → `Local.xcconfig`
-(gitignored) and filling in `EMBERD_URL` + `EMBERD_API_KEY` — baked in as the build-time default —
+(gitignored) and filling in `SAUNAD_URL` + `SAUNAD_API_KEY` — baked in as the build-time default —
 **or** in the app's **Settings** at runtime (Settings always overrides and persists in UserDefaults).
 Note xcconfig treats `//` as a comment, so a URL's `//` must be written `http:/$()/host:port`.
 
@@ -284,7 +284,7 @@ Note xcconfig treats `//` as a comment, so a URL's `//` must be written `http:/$
 ## Remote access
 
 Live temperature (the Live Activity) **works anywhere** — APNs delivers it over the internet with
-nothing exposed. Interactive *control* runs over the LAN; to reach it away from home, put emberd
+nothing exposed. Interactive *control* runs over the LAN; to reach it away from home, put saunad
 behind Tailscale (no inbound ports, no public exposure).
 
 ---
@@ -293,7 +293,7 @@ behind Tailscale (no inbound ports, no public exposure).
 
 This is a **personal interoperability project** for a device its owner owns, on their own
 network — much like the local-control tooling thousands of Home Assistant users run. The shipped
-iOS app contains **no reverse-engineered or proprietary code**: it's clean original Swift, emberd
+iOS app contains **no reverse-engineered or proprietary code**: it's clean original Swift, saunad
 uses the open-source `tinytuya`, and the `localKey` is per-user config you supply (extracted from
 your *own* device), never bundled. It is **not** an App Store product — that would require an
 official Tuya/Sun Home integration path, since OEM-locked devices can't be linked to a
@@ -317,7 +317,7 @@ nominally to describe interoperability — no affiliation or endorsement is impl
 ember stands on a lot of other people's work:
 
 - **[tinytuya](https://github.com/jasonacox/tinytuya)** (Jason Cox) — the Tuya LAN v3.5 client
-  (AES-GCM session-key handshake) at the heart of emberd. Without it the local control doesn't exist.
+  (AES-GCM session-key handshake) at the heart of saunad. Without it the local control doesn't exist.
 - **Prior art — DP maps:** [make-all/tuya-local](https://github.com/make-all/tuya-local) and
   [bitswype/finnleo_ha](https://github.com/bitswype/finnleo_ha) — sibling Tuya sauna/heater maps
   that gave the starting hypotheses I then verified hands-on for the Eclipse 2.
@@ -326,7 +326,7 @@ ember stands on a lot of other people's work:
 - **[SoCo](https://github.com/SoCo/SoCo)** — local Sonos control, no cloud account.
 - **[FastAPI](https://fastapi.tiangolo.com)** + **[Uvicorn](https://www.uvicorn.org)**,
   **[httpx](https://www.python-httpx.org)**, **[PyJWT](https://github.com/jpadilla/pyjwt)** — the
-  emberd HTTP API, ASGI server, HTTP/2 APNs client, and ES256 token signing.
+  saunad HTTP API, ASGI server, HTTP/2 APNs client, and ES256 token signing.
 - Apple's **ActivityKit** (Live Activities / Dynamic Island) and **HealthKit** (`HKWorkout`), plus
   **APNs** for the background temperature push.
 - **[XcodeGen](https://github.com/yonaskolb/XcodeGen)** — generates the Xcode project from `project.yml`.

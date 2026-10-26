@@ -17,7 +17,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# ── iOS / Xcode (ember/) ──
+# ── iOS / Xcode (app/) ──
 **/xcuserdata/
 *.xcuserstate
 DerivedData/
@@ -28,11 +28,11 @@ build/
 Pods/
 # xcodegen output — regenerate with `xcodegen generate` (source of truth = project.yml)
 *.xcodeproj
-ember/Info-App.plist
-ember/Info-Widget.plist
-ember/*.entitlements
-# Personal build defaults (emberd URL + API key) — see Local.example.xcconfig
-ember/Local.xcconfig
+app/Info-App.plist
+app/Info-Widget.plist
+app/*.entitlements
+# Personal build defaults (saunad URL + API key) — see Local.example.xcconfig
+app/Local.xcconfig
 
 # ── Local tooling / machine-specific (never commit) ──
 # Local agent/editor settings — may hold machine-specific paths or secrets.
@@ -47,9 +47,9 @@ BALLADEER.md
 *.psd
 *.ai
 
-# ── homebridge-ember (Node) ──
-homebridge-ember/node_modules/
-homebridge-ember/dist/
+# ── homebridge-sauna (Node) ──
+homebridge-sauna/node_modules/
+homebridge-sauna/dist/
 *.tgz
 
 # ── macOS ──

@@ -1,0 +1,16 @@
+[Unit]
+Description=saunad — Finnmark FD-5 sauna bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/opt/saunad
+Environment=SAUNAD_OPTIONS=/opt/saunad/options.json
+ExecStart=/opt/saunad/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 8765
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
