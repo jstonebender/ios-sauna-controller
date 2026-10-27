@@ -1,23 +1,28 @@
-/** The Eclipse 2's real chromotherapy palette (DP21) in HomeKit hue/sat terms.
- *  Mirrors ember/Shared/ChromaPalette.swift — only these 7 values produce a solid;
- *  mode1 is a no-op and mode8/mode9 read back as white. */
+/** The Finnmark FD-5's chromotherapy palette (Tuya DP111) in HomeKit hue/sat terms.
+ *  Mirrors app/Shared/ChromaPalette.swift. The device light is a plain enum whose
+ *  value IS the color name ("Red", "Blue", …) — unlike the Eclipse 2's "modeN" codes.
+ *  "White" is the low-saturation center; "Scroll" (the color cycle) and "Off" are
+ *  handled by the lights accessory, not here. */
 
 export interface Solid {
-  mode: string;
+  /** The literal FD-5 chromoColor enum value sent to saunad. */
+  value: string;
   name: string;
   hue: number; // 0-360
   sat: number; // 0-100
 }
 
-export const WHITE: Solid = { mode: 'mode', name: 'White', hue: 37.5, sat: 8 };
+export const WHITE: Solid = { value: 'White', name: 'White', hue: 0, sat: 0 };
 
 export const CHROMATIC: Solid[] = [
-  { mode: 'mode3', name: 'Red', hue: 3, sat: 81 },
-  { mode: 'mode2', name: 'Yellow', hue: 48.7, sat: 90 },
-  { mode: 'mode7', name: 'Green', hue: 133.5, sat: 75.6 },
-  { mode: 'mode6', name: 'Teal', hue: 177.1, sat: 74.1 },
-  { mode: 'mode5', name: 'Blue', hue: 212, sat: 90 },
-  { mode: 'mode4', name: 'Pink', hue: 332.6, sat: 70 },
+  { value: 'Red', name: 'Red', hue: 0, sat: 100 },
+  { value: 'Orange', name: 'Orange', hue: 30, sat: 100 },
+  { value: 'Yellow', name: 'Yellow', hue: 55, sat: 100 },
+  { value: 'Green', name: 'Green', hue: 120, sat: 100 },
+  { value: 'Cyan', name: 'Cyan', hue: 180, sat: 100 },
+  { value: 'Blue', name: 'Blue', hue: 240, sat: 100 },
+  { value: 'Purple', name: 'Purple', hue: 270, sat: 100 },
+  { value: 'Magenta', name: 'Magenta', hue: 300, sat: 100 },
 ];
 
 const hueDistance = (a: number, b: number): number => {
@@ -27,7 +32,7 @@ const hueDistance = (a: number, b: number): number => {
 
 /** Snap a HomeKit color pick to the nearest real solid. Low saturation is the wheel's
  *  whitish center — treat it as White regardless of hue. The chromatic solids are
- *  >= 46° apart in hue, so hue-only distance is unambiguous. */
+ *  >= 30° apart in hue, so hue-only distance stays unambiguous. */
 export function nearestSolid(hue: number, sat: number): Solid {
   if (sat < 25) {
     return WHITE;
@@ -41,7 +46,8 @@ export function nearestSolid(hue: number, sat: number): Solid {
   return best;
 }
 
-/** Device -> HomeKit: unknown / mode1 / mode8 / mode9 all render as white. */
-export function solidFor(mode: string | null | undefined): Solid {
-  return CHROMATIC.find((s) => s.mode === mode) ?? WHITE;
+/** Device -> HomeKit swatch. "White", "Scroll", "Off", null and anything unknown all
+ *  render as the white center (while scrolling, the swatch just holds white). */
+export function solidFor(value: string | null | undefined): Solid {
+  return CHROMATIC.find((s) => s.value === value) ?? WHITE;
 }

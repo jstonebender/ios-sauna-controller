@@ -1,6 +1,6 @@
 import { PlatformAccessory, Service } from 'homebridge';
 
-import { AccessoryHandler, EmberPlatform } from '../platform';
+import { AccessoryHandler, SaunaPlatform } from '../platform';
 import { SaunadState } from '../client';
 
 /** Cabin power as an independent switch. Off mirrors the app's Stop (power + heater
@@ -11,7 +11,7 @@ export class SaunaPower implements AccessoryHandler {
   private on = false;
 
   constructor(
-    private readonly platform: EmberPlatform,
+    private readonly platform: SaunaPlatform,
     accessory: PlatformAccessory,
   ) {
     const { Service, Characteristic } = platform;

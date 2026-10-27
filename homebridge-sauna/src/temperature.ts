@@ -1,12 +1,12 @@
-/** HomeKit is Celsius-internal; the device is whole-°F (60-175). These helpers keep the
- *  round-trip stable: dial → whole °F → back to the 0.5 °C step grid, no jitter. */
+/** HomeKit is Celsius-internal; the FD-5 target is whole-°F (86-170). These helpers keep
+ *  the round-trip stable: dial → whole °F → back to the 0.5 °C step grid, no jitter. */
 
-export const MIN_F = 60;
-export const MAX_F = 175;
+export const MIN_F = 86;
+export const MAX_F = 170;
 
-// Aligned to the 0.5 °C step grid that TargetTemperature uses (60°F=15.56, 175°F=79.44).
-export const MIN_C = 15.5;
-export const MAX_C = 79.5;
+// Aligned to the 0.5 °C step grid that TargetTemperature uses (86°F=30.0, 170°F=76.67→76.5).
+export const MIN_C = 30;
+export const MAX_C = 76.5;
 
 export const f2c = (f: number): number => ((f - 32) * 5) / 9;
 export const c2f = (c: number): number => (c * 9) / 5 + 32;

@@ -1,8 +1,8 @@
 {
-  "pluginAlias": "Ember",
+  "pluginAlias": "FinnmarkSauna",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Exposes a Sun Home Eclipse 2 sauna to HomeKit via a local [saunad](https://github.com/mattsmcnulty/ember) bridge. saunad must be reachable from this Homebridge host.",
+  "headerDisplay": "Exposes a Finnmark FD-5 sauna to HomeKit via a local [saunad](https://github.com/jstonebender/ios-sauna-controller) bridge. saunad must be reachable from this Homebridge host.",
   "footerDisplay": "⚠️ This exposes a **heating appliance** to HomeKit automations. Strongly consider setting `server.heaterMaxOnMinutes` in saunad's options.json as a deadman cutoff.",
   "schema": {
     "type": "object",
@@ -44,6 +44,7 @@
       },
       "exposeRainbowSwitch": {
         "title": "Expose Rainbow switch",
+        "description": "A linked switch for the lights' Scroll (color-cycle) effect.",
         "type": "boolean",
         "default": true
       }

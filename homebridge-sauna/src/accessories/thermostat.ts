@@ -1,6 +1,6 @@
 import { PlatformAccessory, Service } from 'homebridge';
 
-import { AccessoryHandler, EmberPlatform } from '../platform';
+import { AccessoryHandler, SaunaPlatform } from '../platform';
 import { SaunadState } from '../client';
 import { MAX_C, MIN_C, currentFtoC, targetCtoF, targetFtoC } from '../temperature';
 
@@ -11,7 +11,7 @@ export class SaunaThermostat implements AccessoryHandler {
   private heating = false;
 
   constructor(
-    private readonly platform: EmberPlatform,
+    private readonly platform: SaunaPlatform,
     accessory: PlatformAccessory,
   ) {
     const { Service, Characteristic } = platform;
@@ -67,9 +67,8 @@ export class SaunaThermostat implements AccessoryHandler {
           // mirror the app's Start: heat auto-powers the cabin on
           await this.platform.control({ power: true, heater: true });
         } else {
-          // mirror the app's Stop: full off. Heater-only off read as "it didn't
-          // turn off" at the cabin (lights/panel stay lit); the Power switch
-          // still allows lights-only power-on without heat.
+          // mirror the app's Stop: full off (power + heater). The Power switch is
+          // the way to run lights-only without heat.
           await this.platform.control({ power: false, heater: false });
         }
       });

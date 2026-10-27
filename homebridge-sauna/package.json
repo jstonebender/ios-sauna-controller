@@ -1,16 +1,16 @@
 {
   "name": "homebridge-sauna",
-  "displayName": "Homebridge Ember",
+  "displayName": "Homebridge Finnmark Sauna",
   "version": "0.1.0",
-  "description": "HomeKit control for a Sun Home Eclipse 2 infrared sauna via the saunad local bridge.",
+  "description": "HomeKit control for a Finnmark FD-5 infrared sauna via the saunad local bridge.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mattsmcnulty/ember.git",
+    "url": "git+https://github.com/jstonebender/ios-sauna-controller.git",
     "directory": "homebridge-sauna"
   },
   "bugs": {
-    "url": "https://github.com/mattsmcnulty/ember/issues"
+    "url": "https://github.com/jstonebender/ios-sauna-controller/issues"
   },
   "main": "dist/index.js",
   "files": [
@@ -22,8 +22,8 @@
   "keywords": [
     "homebridge-plugin",
     "sauna",
-    "sun-home",
-    "eclipse-2",
+    "finnmark",
+    "fd-5",
     "infrared-sauna"
   ],
   "engines": {

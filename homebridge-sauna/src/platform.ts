@@ -14,7 +14,7 @@ import { SaunaThermostat } from './accessories/thermostat';
 import { SaunaLights } from './accessories/lights';
 import { SaunaPower } from './accessories/powerSwitch';
 
-interface EmberConfig extends PlatformConfig {
+interface SaunaConfig extends PlatformConfig {
   baseUrl?: string;
   apiKey?: string;
   pollSeconds?: number;
@@ -27,7 +27,7 @@ export interface AccessoryHandler {
   applyState(state: SaunadState): void;
 }
 
-export class EmberPlatform implements DynamicPlatformPlugin {
+export class SaunaPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
   public readonly Characteristic: typeof Characteristic;
   public readonly client: SaunadClient;
@@ -50,7 +50,7 @@ export class EmberPlatform implements DynamicPlatformPlugin {
 
   constructor(
     public readonly log: Logging,
-    public readonly config: EmberConfig,
+    public readonly config: SaunaConfig,
     public readonly api: API,
   ) {
     this.Service = api.hap.Service;
@@ -80,7 +80,7 @@ export class EmberPlatform implements DynamicPlatformPlugin {
 
     const wantedUUIDs = new Set<string>();
     for (const w of wanted) {
-      const uuid = this.api.hap.uuid.generate(`ember:${w.kind}`);
+      const uuid = this.api.hap.uuid.generate(`finnmark-fd5:${w.kind}`);
       wantedUUIDs.add(uuid);
       let accessory = this.cached.get(uuid);
       if (!accessory) {
@@ -90,9 +90,9 @@ export class EmberPlatform implements DynamicPlatformPlugin {
       }
       accessory
         .getService(this.Service.AccessoryInformation)!
-        .setCharacteristic(this.Characteristic.Manufacturer, 'Sun Home / ember')
-        .setCharacteristic(this.Characteristic.Model, 'Eclipse 2 (saunad)')
-        .setCharacteristic(this.Characteristic.SerialNumber, `ember-${w.kind}`);
+        .setCharacteristic(this.Characteristic.Manufacturer, 'Finnmark')
+        .setCharacteristic(this.Characteristic.Model, 'FD-5 (saunad)')
+        .setCharacteristic(this.Characteristic.SerialNumber, `fd5-${w.kind}`);
       this.handlers.push(w.make(accessory));
     }
 
@@ -107,7 +107,7 @@ export class EmberPlatform implements DynamicPlatformPlugin {
     const pollSeconds = Math.min(60, Math.max(2, this.config.pollSeconds ?? 5));
     void this.poll();
     setInterval(() => void this.poll(), pollSeconds * 1000);
-    this.log.info('Ember platform ready (%d accessories, polling %ds)', this.handlers.length, pollSeconds);
+    this.log.info('Finnmark sauna platform ready (%d accessories, polling %ds)', this.handlers.length, pollSeconds);
   }
 
   private async poll(): Promise<void> {

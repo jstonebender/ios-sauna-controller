@@ -3,26 +3,25 @@
 export interface SaunadState {
   power: boolean;
   heater: boolean;
-  currentTempF: number | null;
+  currentTempF: number | null; // hidden (null) while powered off — the FD-5 reports stale temps
+  currentTempC: number | null;
   targetTempF: number | null;
+  targetTempC: number | null;
   timerSetMin: number | null;
   timerRemainingMin: number | null;
-  chromoColor: string | null;
-  chromoCycle: boolean;
-  footwell: boolean;
+  chromoColor: string | null; // FD-5 light enum: White, Red, …, Scroll; "Off" while powered off
   unit: string;
   online: boolean;
+  heaterInterruptedAt: number | null; // set when the heater went off without an app command (panel tap)
   updatedAt: number;
 }
 
 export interface ControlBody {
   power?: boolean;
   heater?: boolean;
-  targetTempF?: number;
-  timerMin?: number;
-  chromoColor?: string;
-  chromoCycle?: boolean;
-  footwell?: boolean;
+  targetTempF?: number; // 86-170
+  timerMin?: number; // 0-90
+  chromoColor?: string; // White, Red, Orange, Yellow, Green, Cyan, Blue, Purple, Magenta, Scroll, Off
 }
 
 export class AuthError extends Error {
@@ -45,8 +44,8 @@ export class SaunadClient {
     return (await res.json()) as SaunadState;
   }
 
-  /** POST /control does verified Tuya toggle writes (read → write → confirm the status
-   *  DP changed → retry once) — generous timeout. */
+  /** POST /control does verified Tuya writes (write → read back → confirm the DP
+   *  changed) — generous timeout. */
   async control(body: ControlBody): Promise<SaunadState> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) {

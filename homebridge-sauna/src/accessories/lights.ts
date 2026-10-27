@@ -1,19 +1,26 @@
 import { PlatformAccessory, Service } from 'homebridge';
 
-import { AccessoryHandler, EmberPlatform } from '../platform';
+import { AccessoryHandler, SaunaPlatform } from '../platform';
 import { ControlBody, SaunadState } from '../client';
 import { nearestSolid, solidFor } from '../colors';
 
-/** Interior lights (DP113 = all interior) as a color bulb whose picks snap to the
- *  sauna's 7 real chroma solids, plus an optional linked "Rainbow" switch (DP101). */
+/** Interior lights (Tuya DP111) as a color bulb whose picks snap to the sauna's real
+ *  chroma solids, plus an optional linked "Rainbow" switch for the "Scroll" cycle.
+ *
+ *  The FD-5 light is a single enum: a color name, "Scroll", or "Off". There is no
+ *  separate on/off DP, so "bulb on" means a color/Scroll is selected and "bulb off"
+ *  sends "Off". The sauna only accepts a light change while powered ON — saunad rejects
+ *  it otherwise (HTTP 400), so a toggle made with the cabin off surfaces as a brief
+ *  "No Response" and the next poll restores the real (Off) state. */
 export class SaunaLights implements AccessoryHandler {
   private readonly bulb: Service;
   private readonly rainbow?: Service;
 
   private on = false;
-  private hue = 37.5;
-  private sat = 8;
+  private hue = 0;
+  private sat = 0;
   private cycleOn = false;
+  private lastSolid = 'White'; // remember a color so a plain On toggle restores one
 
   // The Home app fires Hue/Saturation (and sometimes On) as separate set events
   // within milliseconds — coalesce them into ONE /control call.
@@ -21,7 +28,7 @@ export class SaunaLights implements AccessoryHandler {
   private flushTimer?: NodeJS.Timeout;
 
   constructor(
-    private readonly platform: EmberPlatform,
+    private readonly platform: SaunaPlatform,
     accessory: PlatformAccessory,
   ) {
     const { Service, Characteristic } = platform;
@@ -37,7 +44,8 @@ export class SaunaLights implements AccessoryHandler {
         return this.on;
       })
       .onSet(async (value) => {
-        await this.platform.control({ footwell: value as boolean });
+        // On → restore the last solid color; Off → the light's "Off" value.
+        await this.platform.control({ chromoColor: (value as boolean) ? this.lastSolid : 'Off' });
       });
 
     // The color-picker UX assumes a Brightness characteristic; the hardware has none.
@@ -47,7 +55,7 @@ export class SaunaLights implements AccessoryHandler {
       .onGet(() => 100)
       .onSet(async (value) => {
         if ((value as number) === 0) {
-          await this.platform.control({ footwell: false });
+          await this.platform.control({ chromoColor: 'Off' });
         } else {
           setTimeout(() => this.bulb.updateCharacteristic(Characteristic.Brightness, 100), 100);
         }
@@ -84,12 +92,8 @@ export class SaunaLights implements AccessoryHandler {
           return this.cycleOn;
         })
         .onSet(async (value) => {
-          if (value as boolean) {
-            await this.platform.control({ footwell: true, chromoCycle: true });
-          } else {
-            // cycle-off resets the LEDs to white; the next poll updates the swatch
-            await this.platform.control({ chromoCycle: false });
-          }
+          // Scroll on; Scroll off drops back to the last solid color.
+          await this.platform.control({ chromoColor: (value as boolean) ? 'Scroll' : this.lastSolid });
         });
     } else {
       const existing = accessory.getServiceById(Service.Switch, 'rainbow');
@@ -110,12 +114,9 @@ export class SaunaLights implements AccessoryHandler {
     this.pending = {};
     const solid = nearestSolid(p.hue ?? this.hue, p.sat ?? this.sat);
 
-    // lights must be on for a color to stick, and picking a color exits rainbow;
-    // saunad applies footwell -> cycle -> color in the right order server-side
-    const body: ControlBody = { chromoColor: solid.mode, footwell: true };
-    if (this.cycleOn) {
-      body.chromoCycle = false;
-    }
+    // Picking a color turns the light to that solid and exits Scroll — it's one enum,
+    // so sending the color name is the whole command.
+    const body: ControlBody = { chromoColor: solid.value };
     try {
       await this.platform.control(body);
     } catch {
@@ -130,12 +131,16 @@ export class SaunaLights implements AccessoryHandler {
 
   applyState(state: SaunadState): void {
     const { Characteristic } = this.platform;
-    this.on = state.footwell;
-    this.cycleOn = state.chromoCycle;
+    const color = state.chromoColor;
+    this.on = color !== null && color !== 'Off';
+    this.cycleOn = color === 'Scroll';
 
-    // While the rainbow cycle runs, DP21 (and therefore the swatch) simply holds its
-    // last solid — don't chase the animation.
-    const solid = solidFor(state.chromoColor);
+    // While Scroll runs (or the light is off), hold the last solid's swatch rather than
+    // chasing the animation; remember any real solid for the On/Scroll-off restore.
+    const solid = solidFor(color);
+    if (color && color !== 'Off' && color !== 'Scroll') {
+      this.lastSolid = color;
+    }
     this.hue = solid.hue;
     this.sat = solid.sat;
 
