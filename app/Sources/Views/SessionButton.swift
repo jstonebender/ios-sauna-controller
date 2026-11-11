@@ -53,20 +53,17 @@ struct SessionButton: View {
             inSession ? SessionRunner.getOut(store: store, ctx: ctx)
                       : SessionRunner.getIn(store: store)
         } label: {
-            Label(inSession ? "Get Out" : "Get In",
-                  systemImage: inSession ? "figure.walk.departure" : "figure.walk.arrival")
-                .font(.system(.title3, design: .rounded, weight: .bold))
-                .frame(maxWidth: .infinity).frame(height: 54)
-                .foregroundStyle(inSession ? Theme.textPrimary : Theme.bg0)
-                .background {
-                    if inSession {
-                        RoundedRectangle(cornerRadius: 19, style: .continuous).fill(Color.white.opacity(0.07))
-                            .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(Theme.stroke))
-                    } else {
-                        RoundedRectangle(cornerRadius: 19, style: .continuous).fill(Theme.emberGradient)
-                    }
-                }
-                .emberGlow(Theme.ember, radius: 14, active: !inSession)
+            HStack(spacing: 10) {
+                Image(systemName: inSession ? "figure.walk.departure" : "figure.walk.arrival")
+                    .foregroundStyle(Theme.ember)
+                Text(inSession ? "Get Out" : "Get In")
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .font(.system(.title3, design: .rounded, weight: .bold))
+            .frame(maxWidth: .infinity).frame(height: 50)
+            // Secondary "ghost" style — distinct from the filled Start Heating button.
+            .background(RoundedRectangle(cornerRadius: 19, style: .continuous).fill(Color.white.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(Theme.stroke))
         }
         .buttonStyle(.plain)
     }
