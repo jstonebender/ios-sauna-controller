@@ -6,10 +6,9 @@ struct ControlView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 12) {
                 ConnectionBar()
                 HeroGauge(state: s)
-                    .padding(.top, 4)
                 StartStopButton()
                 ControlFeedback()
                 TargetCard(state: s)
@@ -20,7 +19,7 @@ struct ControlView: View {
                 StatusCard(state: s)
             }
             .padding(.horizontal, 18)
-            .padding(.bottom, 36)
+            .padding(.bottom, 20)
         }
         .scrollIndicators(.hidden)
         .animation(.snappy(duration: 0.35), value: VisualKey(s))
@@ -129,7 +128,7 @@ private struct HeroGauge: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
-        .frame(height: 200)
+        .frame(height: 176)
         .padding(.horizontal, 8)
     }
 }
@@ -171,7 +170,7 @@ private struct StartStopButton: View {
                     Text("Start Heating").font(.system(.title3, design: .rounded, weight: .bold))
                 }
             }
-            .frame(maxWidth: .infinity).frame(height: 62)
+            .frame(maxWidth: .infinity).frame(height: 54)
             .foregroundStyle(heating ? Theme.ember : Theme.bg0)
             .background {
                 if heating {
@@ -255,7 +254,7 @@ private struct TargetCard: View {
             .onTapGesture { editing = true }
             stepButton("plus") { editing = false; Task { await store.nudgeTarget(1) } }
         }
-        .glassCard()
+        .glassCard(14)
         .onAppear { text = String(displayed) }
         .onChange(of: state.targetTempF) { _, new in
             if !editing { text = String(new ?? 150) }   // live poll updates the field only when not typing
@@ -438,7 +437,7 @@ private struct StatusCard: View {
             }
             .font(.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
         }
-        .glassCard()
+        .glassCard(14)
     }
 
     // MARK: next schedule
@@ -469,7 +468,7 @@ private struct StatusCard: View {
             }
         }
         .buttonStyle(.plain)
-        .glassCard()
+        .glassCard(14)
         .sheet(isPresented: $showSchedules) { SchedulesView() }
     }
 
