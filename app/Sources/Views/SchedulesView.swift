@@ -87,6 +87,7 @@ struct ScheduleEditorView: View {
     @Environment(SchedulesStore.self) private var store
     @Environment(AppSettings.self) private var settings
     @Environment(HeatingModel.self) private var heating
+    @Environment(SaunaStore.self) private var sauna
     @Environment(\.dismiss) private var dismiss
 
     @State var schedule: SaunaSchedule
@@ -123,10 +124,15 @@ struct ScheduleEditorView: View {
                     }
                 } header: { Text("Time") } footer: {
                     if schedule.readyBy && schedule.turnOn {
-                        if schedule.autoPreheat {
-                            Text("Auto ≈ \(schedule.preheatLeadMin) min lead \(learnedNote). Heating starts about \(schedule.startTimeString).")
-                        } else {
-                            Text("Heating starts about \(schedule.startTimeString) so it reaches \(schedule.targetTempF ?? 150)°F by \(schedule.timeString).")
+                        VStack(alignment: .leading, spacing: 3) {
+                            if schedule.autoPreheat {
+                                Text("Auto ≈ \(schedule.preheatLeadMin) min lead \(learnedNote). Heating starts about \(schedule.startTimeString).")
+                            } else {
+                                Text("Heating starts about \(schedule.startTimeString) so it reaches \(schedule.targetTempF ?? 150)°F by \(schedule.timeString).")
+                            }
+                            if let liveHint {
+                                Text(liveHint).foregroundStyle(Theme.amber)
+                            }
                         }
                     }
                 }
@@ -222,6 +228,15 @@ struct ScheduleEditorView: View {
         heating.sampleCount > 0
             ? "(learned from \(heating.sampleCount) session\(heating.sampleCount == 1 ? "" : "s"))"
             : "(default until it learns)"
+    }
+
+    /// When connected, what the lead would be using the *actual* temp right now —
+    /// the same recompute saunad will do at fire time, previewed live.
+    private var liveHint: String? {
+        guard schedule.readyBy, schedule.turnOn, schedule.autoPreheat,
+              sauna.reachable, let cur = sauna.state.currentTempF else { return nil }
+        let lead = heating.leadMinutes(from: cur, to: schedule.targetTempF ?? 150)
+        return "Right now (\(cur)°F) that'd be about \(lead) min."
     }
 
     // MARK: bindings

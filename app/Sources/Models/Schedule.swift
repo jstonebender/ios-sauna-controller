@@ -177,3 +177,56 @@ final class HeatingModel {
         UserDefaults.standard.set(sampleCount, forKey: Self.kCount)
     }
 }
+
+/// Decides when a schedule should fire and what it does. Pure, testable logic —
+/// the app uses it for live previews now, and saunad will use the same rules to
+/// actually fire schedules once it runs the loop. The key point: for a "ready by"
+/// schedule it recomputes the preheat lead from the *live* temperature at decision
+/// time, so a warm cabin starts late and a cold one starts early.
+@MainActor
+enum ScheduleEngine {
+    /// The control to apply when the schedule fires.
+    static func action(for s: SaunaSchedule) -> ControlRequest {
+        guard s.turnOn else { return ControlRequest(power: false, heater: false) }
+        return ControlRequest(power: true, heater: true,
+                              targetTempF: s.targetTempF,
+                              timerMin: s.timerMin,
+                              chromoColor: s.chromoColor)
+    }
+
+    /// Preheat lead to use right now for a "ready by" schedule: from the live temp and
+    /// learned rate when auto; the stored manual lead otherwise; 0 when not "ready by".
+    /// Falls back to a cold-start estimate when the current temp is unknown.
+    static func leadMinutes(for s: SaunaSchedule, currentTempF: Int?, heating: HeatingModel) -> Int {
+        guard s.readyBy, s.turnOn else { return 0 }
+        let target = s.targetTempF ?? 150
+        guard s.autoPreheat else { return s.preheatLeadMin }
+        if let cur = currentTempF { return heating.leadMinutes(from: cur, to: target) }
+        return heating.estimatedLead(toTarget: target)
+    }
+
+    /// The moment heating should start for the given calendar `day`, or nil if the
+    /// schedule doesn't apply that day / is disabled. For "ready by" this is the
+    /// target time minus the live-recomputed lead.
+    static func startDate(for s: SaunaSchedule, on day: Date, currentTempF: Int?,
+                          heating: HeatingModel, calendar: Calendar = .current) -> Date? {
+        guard s.enabled else { return nil }
+        if s.isOneTime {
+            guard let once = s.onceDate, calendar.isDate(once, inSameDayAs: day) else { return nil }
+        } else {
+            guard s.weekdays.contains(calendar.component(.weekday, from: day)) else { return nil }
+        }
+        guard let anchor = calendar.date(bySettingHour: s.hour, minute: s.minute, second: 0, of: day)
+        else { return nil }
+        let lead = leadMinutes(for: s, currentTempF: currentTempF, heating: heating)
+        return lead == 0 ? anchor : calendar.date(byAdding: .minute, value: -lead, to: anchor)
+    }
+
+    /// Whether a tick at `now` should fire this schedule (start moment within [now-window, now]).
+    static func shouldFire(_ s: SaunaSchedule, now: Date, currentTempF: Int?, heating: HeatingModel,
+                           window: TimeInterval = 60, calendar: Calendar = .current) -> Bool {
+        guard let start = startDate(for: s, on: now, currentTempF: currentTempF,
+                                    heating: heating, calendar: calendar) else { return false }
+        return now >= start && now < start.addingTimeInterval(window)
+    }
+}
