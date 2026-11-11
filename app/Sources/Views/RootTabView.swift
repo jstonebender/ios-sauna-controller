@@ -6,6 +6,7 @@ struct RootTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var showSettings = false
+    @State private var showSchedules = false
     @State private var isLandscape = false
 
     var body: some View {
@@ -44,8 +45,9 @@ struct RootTabView: View {
             ControlView()
                 .background(Theme.background)
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { settingsButton; powerButton }
+                .toolbar { settingsButton; schedulesButton; powerButton }
                 .toolbarBackground(.hidden, for: .navigationBar)
+                .sheet(isPresented: $showSchedules) { SchedulesView() }
         }
     }
 
@@ -61,6 +63,13 @@ struct RootTabView: View {
     @ToolbarContentBuilder private var settingsButton: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                .tint(Theme.textSecondary)
+        }
+    }
+
+    @ToolbarContentBuilder private var schedulesButton: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { showSchedules = true } label: { Image(systemName: "calendar") }
                 .tint(Theme.textSecondary)
         }
     }

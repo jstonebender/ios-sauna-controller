@@ -7,6 +7,7 @@ import Observation
 @Observable
 final class SaunaStore {
     private let settings: AppSettings
+    private let heating: HeatingModel
     var state = SaunaState()
     var reachable = false
     var lastError: String?
@@ -29,7 +30,10 @@ final class SaunaStore {
     private var buzzedInterruption: Double?   // one haptic per heater interruption
     private var lastSuccessfulPollAt: Date?
 
-    init(settings: AppSettings) { self.settings = settings }
+    init(settings: AppSettings, heating: HeatingModel) {
+        self.settings = settings
+        self.heating = heating
+    }
 
     private var client: BridgeClient? {
         guard let url = settings.url else { return nil }
@@ -62,6 +66,7 @@ final class SaunaStore {
             let s = try await client.state()
             guard epoch == controlEpoch else { return }   // a control superseded this fetch — drop it
             state = s
+            heating.observe(s)   // learn the real heat-up rate from live polls
             reconcileTimerDeadline(with: s)
             if let at = s.heaterInterruptedAt, !s.heater, at != buzzedInterruption {
                 buzzedInterruption = at
