@@ -165,12 +165,14 @@ final class SaunaStore {
     func start() async {
         Haptics.success()
         // power on + heat, then apply the user's default timer + light (power-on resets both)
+        let tgt = settings.defaultTargetF
         let t = settings.defaultTimerMin
         let c = settings.defaultLightColor
         await control(.init(power: true, heater: true,
+                            targetTempF: tgt,
                             timerMin: t > 0 ? t : nil,
                             chromoColor: c == "Off" ? nil : c)) {
-            $0.power = true; $0.heater = true
+            $0.power = true; $0.heater = true; $0.targetTempF = tgt
             if t > 0 { $0.timerSetMin = t; $0.timerRemainingMin = t }
             $0.chromoColor = (c == "Off") ? "White" : c
         }

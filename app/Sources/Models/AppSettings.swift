@@ -18,6 +18,10 @@ final class AppSettings {
     var timerPresets: [Int] {
         didSet { UserDefaults.standard.set(timerPresets, forKey: Self.kPresets) }
     }
+    /// Target °F applied when you Start Heating.
+    var defaultTargetF: Int {
+        didSet { UserDefaults.standard.set(defaultTargetF, forKey: Self.kDefTarget) }
+    }
     /// Applied when starting the sauna (Start Heating / Get In). 0 = don't set a timer.
     var defaultTimerMin: Int {
         didSet { UserDefaults.standard.set(defaultTimerMin, forKey: Self.kDefTimer) }
@@ -32,6 +36,7 @@ final class AppSettings {
     private static let kURL = "saunad.baseURL"
     private static let kKey = "saunad.apiKey"
     private static let kPresets = "saunad.timerPresets"
+    private static let kDefTarget = "saunad.defaultTargetF"
     private static let kDefTimer = "saunad.defaultTimerMin"
     private static let kDefLight = "saunad.defaultLightColor"
 
@@ -39,6 +44,7 @@ final class AppSettings {
         baseURL = UserDefaults.standard.string(forKey: Self.kURL) ?? Self.buildDefault("SaunadDefaultURL")
         apiKey = UserDefaults.standard.string(forKey: Self.kKey) ?? Self.buildDefault("SaunadDefaultAPIKey")
         timerPresets = ((UserDefaults.standard.array(forKey: Self.kPresets) as? [Int]) ?? Self.defaultPresets).sorted()
+        defaultTargetF = (UserDefaults.standard.object(forKey: Self.kDefTarget) as? Int) ?? 150
         defaultTimerMin = (UserDefaults.standard.object(forKey: Self.kDefTimer) as? Int) ?? 60
         defaultLightColor = UserDefaults.standard.string(forKey: Self.kDefLight) ?? "White"
     }

@@ -40,6 +40,7 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Stepper("Target \(settings.defaultTargetF)°F", value: $settings.defaultTargetF, in: 86...170)
                     Picker("Timer", selection: $settings.defaultTimerMin) {
                         Text("None").tag(0)
                         ForEach(settings.timerPresets, id: \.self) { m in Text("\(m) min").tag(m) }
@@ -48,7 +49,7 @@ struct SettingsView: View {
                         ForEach(ChromaPalette.solids, id: \.value) { c in Text(c.name).tag(c.value) }
                     }
                 } header: { Text("Default when starting") } footer: {
-                    Text("Applied when you Start Heating or Get In.")
+                    Text("Target is applied when you Start Heating; timer and light also on Get In.")
                 }
 
                 Section {
