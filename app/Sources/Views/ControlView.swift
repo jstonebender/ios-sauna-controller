@@ -400,10 +400,13 @@ private struct StatusCard: View {
     @State private var showSchedules = false
 
     var body: some View {
-        if let eta = preheatETA {
-            preheatView(eta)
-        } else if let next = nextSchedule {
-            nextView(next.schedule)
+        // Show both when applicable: the ETA while preheating, and always the next
+        // scheduled event so "what's next" stays visible even mid-session.
+        if preheatETA != nil || nextSchedule != nil {
+            VStack(spacing: 12) {
+                if let eta = preheatETA { preheatView(eta) }
+                if let next = nextSchedule { nextView(next.schedule) }
+            }
         }
     }
 
