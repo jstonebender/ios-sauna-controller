@@ -50,16 +50,27 @@ struct SessionButton: View {
     // Can't "Get In" a sauna that's off; "Get Out" always works once in a session.
     private var disabled: Bool { !inSession && !store.state.power }
 
+    /// Whether the cabin has reached the target (ready to get in).
+    private var atTarget: Bool {
+        guard let cur = store.state.currentTempF, let tgt = store.state.targetTempF else { return false }
+        return cur >= tgt
+    }
+
     var body: some View {
         Button {
             inSession ? SessionRunner.getOut(store: store, ctx: ctx)
                       : SessionRunner.getIn(store: store)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: inSession ? "figure.walk.departure" : "figure.walk.arrival")
                     .foregroundStyle(Theme.ember)
                 Text(inSession ? "Get Out" : "Get In")
                     .foregroundStyle(Theme.textPrimary)
+                if !inSession && store.state.power {
+                    Text(atTarget ? "· at target" : "· not at target")
+                        .font(.system(.footnote, design: .rounded, weight: .semibold))
+                        .foregroundStyle(atTarget ? .green : Theme.amber)
+                }
             }
             .font(.system(.title3, design: .rounded, weight: .bold))
             .frame(maxWidth: .infinity).frame(height: 50)
