@@ -84,7 +84,19 @@ struct TimerDurationsView: View {
         List {
             Section {
                 ForEach(settings.timerPresets, id: \.self) { m in
-                    Text("\(m) min")
+                    HStack {
+                        Text("\(m) min")
+                        Spacer()
+                        Button(role: .destructive) {
+                            settings.timerPresets.removeAll { $0 == m }
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundStyle(Theme.emberHot)
+                                .imageScale(.large)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Delete \(m) minutes")
+                    }
                 }
                 .onDelete { settings.timerPresets.remove(atOffsets: $0) }
                 if settings.timerPresets.isEmpty {
@@ -92,7 +104,7 @@ struct TimerDurationsView: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
             } header: { Text("Durations") } footer: {
-                Text("Kept in ascending order; swipe to delete. Quick picks in the Timer dropdown — the FD-5 caps a running timer at 90 minutes.")
+                Text("Tap the minus to remove (or swipe). Kept in ascending order. Quick picks in the Timer dropdown — the FD-5 caps a running timer at 90 minutes.")
             }
 
             Section("Add a duration") {
