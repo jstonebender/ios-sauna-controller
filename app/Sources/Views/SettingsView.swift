@@ -39,6 +39,17 @@ struct SettingsView: View {
                     LabeledContent("Heater", value: store.state.heater ? "On" : "Off")
                 }
 
+                Section {
+                    NavigationLink {
+                        LogView().navigationTitle("Log")
+                    } label: { Label("Session log", systemImage: "list.bullet.rectangle.portrait") }
+                    #if DEBUG
+                    NavigationLink {
+                        DebugView().navigationTitle("Debug").navigationBarTitleDisplayMode(.inline)
+                    } label: { Label("Debug", systemImage: "ladybug.fill") }
+                    #endif
+                }
+
                 Section { LabeledContent("Sauna Controller", value: "1.0") }
             }
             .navigationTitle("Settings")
