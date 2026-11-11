@@ -48,6 +48,15 @@ private struct ConnectionBar: View {
     var body: some View {
         HStack(spacing: 8) {
             statusPill
+            // live countdown next to the status label; hidden when no timer is running
+            if let deadline = store.timerDeadline, deadline > .now {
+                HStack(spacing: 4) {
+                    Image(systemName: "hourglass").font(.caption2)
+                    Text(timerInterval: Date.now...deadline, countsDown: true).monospacedDigit()
+                }
+                .font(.system(.footnote, design: .rounded, weight: .medium))
+                .foregroundStyle(Theme.amber)
+            }
             Spacer()
             if !store.reachable {
                 Pill(text: "Offline", color: Theme.emberHot)
@@ -300,16 +309,6 @@ private struct TimerCard: View {
                 }
             } label: {
                 DropdownPill(text: valueText)
-            }
-            if let deadline = store.timerDeadline, deadline > .now {
-                // self-ticking countdown — no dependence on the 2s poll
-                HStack(spacing: 4) {
-                    Image(systemName: "hourglass").font(.caption2)
-                    Text(timerInterval: Date.now...deadline, countsDown: true).monospacedDigit()
-                    Text("left")
-                }
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(Theme.amber)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
