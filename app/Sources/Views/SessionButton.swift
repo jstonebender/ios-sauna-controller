@@ -69,7 +69,7 @@ struct SessionButton: View {
                 if !inSession && store.state.power {
                     Text(atTarget ? "· at target" : "· not at target")
                         .font(.system(.footnote, design: .rounded, weight: .semibold))
-                        .foregroundStyle(atTarget ? .green : Theme.amber)
+                        .foregroundStyle(atTarget ? Theme.ember : Theme.textTertiary)
                 }
             }
             .font(.system(.title3, design: .rounded, weight: .bold))
