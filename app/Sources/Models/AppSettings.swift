@@ -18,17 +18,29 @@ final class AppSettings {
     var timerPresets: [Int] {
         didSet { UserDefaults.standard.set(timerPresets, forKey: Self.kPresets) }
     }
+    /// Applied when starting the sauna (Start Heating / Get In). 0 = don't set a timer.
+    var defaultTimerMin: Int {
+        didSet { UserDefaults.standard.set(defaultTimerMin, forKey: Self.kDefTimer) }
+    }
+    /// Light color applied when starting the sauna. "White" by default.
+    var defaultLightColor: String {
+        didSet { UserDefaults.standard.set(defaultLightColor, forKey: Self.kDefLight) }
+    }
 
     static let defaultPresets = [25, 60, 75, 90]
 
     private static let kURL = "saunad.baseURL"
     private static let kKey = "saunad.apiKey"
     private static let kPresets = "saunad.timerPresets"
+    private static let kDefTimer = "saunad.defaultTimerMin"
+    private static let kDefLight = "saunad.defaultLightColor"
 
     init() {
         baseURL = UserDefaults.standard.string(forKey: Self.kURL) ?? Self.buildDefault("SaunadDefaultURL")
         apiKey = UserDefaults.standard.string(forKey: Self.kKey) ?? Self.buildDefault("SaunadDefaultAPIKey")
         timerPresets = ((UserDefaults.standard.array(forKey: Self.kPresets) as? [Int]) ?? Self.defaultPresets).sorted()
+        defaultTimerMin = (UserDefaults.standard.object(forKey: Self.kDefTimer) as? Int) ?? 60
+        defaultLightColor = UserDefaults.standard.string(forKey: Self.kDefLight) ?? "White"
     }
 
     /// Default injected at build time from the gitignored Local.xcconfig (via Info.plist).

@@ -40,6 +40,18 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Picker("Timer", selection: $settings.defaultTimerMin) {
+                        Text("None").tag(0)
+                        ForEach(settings.timerPresets, id: \.self) { m in Text("\(m) min").tag(m) }
+                    }
+                    Picker("Light", selection: $settings.defaultLightColor) {
+                        ForEach(ChromaPalette.solids, id: \.value) { c in Text(c.name).tag(c.value) }
+                    }
+                } header: { Text("Default when starting") } footer: {
+                    Text("Applied when you Start Heating or Get In.")
+                }
+
+                Section {
                     NavigationLink {
                         TimerDurationsView()
                     } label: { Label("Timer durations", systemImage: "timer") }

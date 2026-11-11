@@ -164,9 +164,15 @@ final class SaunaStore {
     /// "Start" powers on + heats; "Stop" turns the heater off.
     func start() async {
         Haptics.success()
-        // power on + heat; the FD-5 turns its lights on White by itself at power-on
-        await control(.init(power: true, heater: true)) {
-            $0.power = true; $0.heater = true; $0.chromoColor = $0.lightsOn ? $0.chromoColor : "White"
+        // power on + heat, then apply the user's default timer + light (power-on resets both)
+        let t = settings.defaultTimerMin
+        let c = settings.defaultLightColor
+        await control(.init(power: true, heater: true,
+                            timerMin: t > 0 ? t : nil,
+                            chromoColor: c == "Off" ? nil : c)) {
+            $0.power = true; $0.heater = true
+            if t > 0 { $0.timerSetMin = t; $0.timerRemainingMin = t }
+            $0.chromoColor = (c == "Off") ? "White" : c
         }
         await SaunaActivityController.shared.updateHeater(state.heater, state: state)  // preheat dial on the Lock Screen
     }
@@ -213,10 +219,13 @@ final class SaunaStore {
         }
     }
 
-    /// The "Get In" scene: lights red, 25-minute timer.
+    /// The "Get In" scene: applies the user's default timer + light color.
     func getInScene() async {
-        await control(.init(timerMin: 25, chromoColor: "Red")) {
-            $0.timerSetMin = 25; $0.chromoColor = "Red"
+        let t = settings.defaultTimerMin
+        let c = settings.defaultLightColor
+        await control(.init(timerMin: t > 0 ? t : nil, chromoColor: c == "Off" ? nil : c)) {
+            if t > 0 { $0.timerSetMin = t; $0.timerRemainingMin = t }
+            if c != "Off" { $0.chromoColor = c }
         }
     }
 
