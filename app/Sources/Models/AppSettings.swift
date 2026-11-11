@@ -28,7 +28,7 @@ final class AppSettings {
     init() {
         baseURL = UserDefaults.standard.string(forKey: Self.kURL) ?? Self.buildDefault("SaunadDefaultURL")
         apiKey = UserDefaults.standard.string(forKey: Self.kKey) ?? Self.buildDefault("SaunadDefaultAPIKey")
-        timerPresets = (UserDefaults.standard.array(forKey: Self.kPresets) as? [Int]) ?? Self.defaultPresets
+        timerPresets = ((UserDefaults.standard.array(forKey: Self.kPresets) as? [Int]) ?? Self.defaultPresets).sorted()
     }
 
     /// Default injected at build time from the gitignored Local.xcconfig (via Info.plist).

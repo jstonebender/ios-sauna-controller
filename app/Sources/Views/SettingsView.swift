@@ -87,20 +87,19 @@ struct TimerDurationsView: View {
                     Text("\(m) min")
                 }
                 .onDelete { settings.timerPresets.remove(atOffsets: $0) }
-                .onMove { settings.timerPresets.move(fromOffsets: $0, toOffset: $1) }
                 if settings.timerPresets.isEmpty {
                     Text("No durations — add one below.")
                         .foregroundStyle(Theme.textTertiary)
                 }
             } header: { Text("Durations") } footer: {
-                Text("Quick picks in the Timer dropdown. The FD-5 caps a running timer at 90 minutes.")
+                Text("Kept in ascending order; swipe to delete. Quick picks in the Timer dropdown — the FD-5 caps a running timer at 90 minutes.")
             }
 
             Section("Add a duration") {
                 Stepper("\(newValue) min", value: $newValue, in: 1...90, step: 5)
                 Button("Add") {
                     guard !settings.timerPresets.contains(newValue) else { return }
-                    settings.timerPresets.append(newValue)
+                    settings.timerPresets = (settings.timerPresets + [newValue]).sorted()
                 }
             }
 
@@ -108,8 +107,8 @@ struct TimerDurationsView: View {
                 Button("Reset to defaults") { settings.timerPresets = AppSettings.defaultPresets }
             }
         }
+        .onAppear { settings.timerPresets = settings.timerPresets.sorted() }
         .navigationTitle("Timer durations")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { EditButton() }
     }
 }
