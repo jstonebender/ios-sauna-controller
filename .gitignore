@@ -31,6 +31,8 @@ Pods/
 app/Info-App.plist
 app/Info-Widget.plist
 app/*.entitlements
+# Hand-written (not xcodegen-generated); must be tracked:
+!app/SaunaController-FreeTeam.entitlements
 # Personal build defaults (saunad URL + API key) — see Local.example.xcconfig
 app/Local.xcconfig
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Entitlements for installing on a device with a FREE Apple ID (Personal Team).
+     Free teams can't provision Push Notifications or HealthKit, so those are
+     omitted here. Used only by the Debug-FreeTeam build config; the normal
+     SaunaController.entitlements (full features) is untouched. -->
+<dict/>
+</plist>

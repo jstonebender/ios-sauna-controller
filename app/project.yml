@@ -6,6 +6,11 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
 
+configs:
+  Debug: debug
+  Release: release
+  Debug-FreeTeam: debug      # install on a device with a free Apple ID (no Push/HealthKit)
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -24,6 +29,7 @@ targets:
     configFiles:
       Debug: Config.xcconfig
       Release: Config.xcconfig
+      Debug-FreeTeam: Config.xcconfig
     sources:
       - Sources
       - Shared
@@ -34,6 +40,10 @@ targets:
         PRODUCT_NAME: SaunaController
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug-FreeTeam:
+          # Free Personal Team can't provision Push/HealthKit — use the stripped entitlements.
+          CODE_SIGN_ENTITLEMENTS: SaunaController-FreeTeam.entitlements
     info:
       path: Info-App.plist
       properties:
@@ -46,6 +56,8 @@ targets:
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         NSLocalNetworkUsageDescription: "Sauna Controller talks to your sauna bridge (saunad) on your local network to read temperature and control the sauna."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSHealthUpdateUsageDescription: "Sauna Controller logs each sauna session to Apple Health."
         SaunadDefaultURL: "$(SAUNAD_URL)"
         SaunadDefaultAPIKey: "$(SAUNAD_API_KEY)"
@@ -75,3 +87,21 @@ targets:
         CFBundleDisplayName: Sauna Controller
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+schemes:
+  SaunaController:
+    build:
+      targets:
+        SaunaController: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  SaunaController-FreeTeam:
+    build:
+      targets:
+        SaunaController: all
+    run:
+      config: Debug-FreeTeam
+    archive:
+      config: Debug-FreeTeam
