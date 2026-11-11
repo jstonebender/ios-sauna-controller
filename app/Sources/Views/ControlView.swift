@@ -293,8 +293,8 @@ private struct TargetCard: View {
 
 private struct TimerCard: View {
     @Environment(SaunaStore.self) private var store
+    @Environment(AppSettings.self) private var settings
     let state: SaunaState
-    private let presets = [25, 60, 75, 90]
 
     private var valueText: String { state.timerSetMin.map { "\($0) min" } ?? "Off" }
 
@@ -304,7 +304,7 @@ private struct TimerCard: View {
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
             Menu {
                 Button("Off") { Task { await store.setTimer(0) } }
-                ForEach(presets, id: \.self) { m in
+                ForEach(settings.timerPresets, id: \.self) { m in
                     Button("\(m) min") { Task { await store.setTimer(m) } }
                 }
             } label: {

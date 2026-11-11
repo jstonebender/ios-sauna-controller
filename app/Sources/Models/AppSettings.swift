@@ -14,13 +14,21 @@ final class AppSettings {
     var apiKey: String {
         didSet { UserDefaults.standard.set(apiKey, forKey: Self.kKey) }
     }
+    /// Quick-pick minute durations shown in the Timer dropdown; editable in Settings.
+    var timerPresets: [Int] {
+        didSet { UserDefaults.standard.set(timerPresets, forKey: Self.kPresets) }
+    }
+
+    static let defaultPresets = [25, 60, 75, 90]
 
     private static let kURL = "saunad.baseURL"
     private static let kKey = "saunad.apiKey"
+    private static let kPresets = "saunad.timerPresets"
 
     init() {
         baseURL = UserDefaults.standard.string(forKey: Self.kURL) ?? Self.buildDefault("SaunadDefaultURL")
         apiKey = UserDefaults.standard.string(forKey: Self.kKey) ?? Self.buildDefault("SaunadDefaultAPIKey")
+        timerPresets = (UserDefaults.standard.array(forKey: Self.kPresets) as? [Int]) ?? Self.defaultPresets
     }
 
     /// Default injected at build time from the gitignored Local.xcconfig (via Info.plist).
