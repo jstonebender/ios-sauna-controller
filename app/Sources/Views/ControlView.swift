@@ -17,7 +17,6 @@ struct ControlView: View {
                     TimerCard(state: s)
                     LightsCard(state: s)
                 }
-                SonosCard()
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 36)
@@ -385,37 +384,5 @@ private struct DropdownPill: View {
     }
 }
 
-// MARK: - Sonos
-
-private struct SonosCard: View {
-    @Environment(SaunaStore.self) private var store
-    @State private var volume = 30.0
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Sauna Speaker", systemImage: "hifispeaker.fill").foregroundStyle(Theme.textSecondary)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-            HStack(spacing: 40) {
-                ctl("backward.fill") { Task { await store.audio("prev") } }
-                ctl("playpause.fill") { Task { await store.audio("play") } }
-                ctl("forward.fill") { Task { await store.audio("next") } }
-            }
-            .frame(maxWidth: .infinity)
-            HStack {
-                Image(systemName: "speaker.fill").foregroundStyle(Theme.textTertiary)
-                Slider(value: $volume, in: 0...100, step: 1) { editing in
-                    if !editing { Task { await store.audio("volume", volume: Int(volume)) } }
-                }.tint(Theme.amber)
-                Image(systemName: "speaker.wave.3.fill").foregroundStyle(Theme.textTertiary)
-            }
-        }
-        .glassCard()
-        .task {  // seed the slider from the speaker's actual volume
-            if let v = await store.audioVolume() { volume = Double(v) }
-        }
-    }
-    private func ctl(_ icon: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon).font(.title2).foregroundStyle(Theme.textPrimary)
-        }.buttonStyle(.plain)
-    }
-}
+// (Removed: SonosCard — the FD-5's audio is Bluetooth, controlled by the phone/pad,
+// not over the Tuya API. See the "sauna-audio-is-local-bluetooth" note.)
