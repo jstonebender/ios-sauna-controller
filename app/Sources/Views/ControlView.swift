@@ -17,6 +17,7 @@ struct ControlView: View {
                     TimerCard(state: s)
                     LightsCard(state: s)
                 }
+                StatusCard(state: s)
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 36)
@@ -386,3 +387,113 @@ private struct DropdownPill: View {
 
 // (Removed: SonosCard — the FD-5's audio is Bluetooth, controlled by the phone/pad,
 // not over the Tuya API. See the "sauna-audio-is-local-bluetooth" note.)
+
+// MARK: - Status (preheat ETA / next schedule)
+
+/// Adaptive card: while preheating shows the ETA to target (from the learned heat
+/// rate) with a progress bar; otherwise shows the next upcoming schedule.
+private struct StatusCard: View {
+    @Environment(SaunaStore.self) private var store
+    @Environment(HeatingModel.self) private var heating
+    @Environment(SchedulesStore.self) private var schedules
+    let state: SaunaState
+    @State private var showSchedules = false
+
+    var body: some View {
+        if let eta = preheatETA {
+            preheatView(eta)
+        } else if let next = nextSchedule {
+            nextView(next.schedule)
+        }
+    }
+
+    // MARK: preheat
+
+    /// Minutes to reach target from the current temp (nil unless actively climbing).
+    private var preheatETA: Int? {
+        guard state.heater, let cur = state.currentTempF, let tgt = state.targetTempF, cur < tgt - 1
+        else { return nil }
+        return heating.leadMinutes(from: cur, to: tgt)
+    }
+
+    private func preheatView(_ eta: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Preheating", systemImage: "flame.fill")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Theme.ember)
+                Spacer()
+                Text("ready in ~\(eta) min")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Theme.amber)
+            }
+            ProgressView(value: state.preheatProgress).tint(Theme.ember)
+            HStack {
+                Text("\(state.currentTempF ?? 0)°")
+                Spacer()
+                Text("target \(state.targetTempF ?? 0)°")
+            }
+            .font(.caption).foregroundStyle(Theme.textSecondary).monospacedDigit()
+        }
+        .glassCard()
+    }
+
+    // MARK: next schedule
+
+    private func nextView(_ s: SaunaSchedule) -> some View {
+        Button { showSchedules = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar")
+                    .font(.title3).foregroundStyle(Theme.amber).frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Next · \(nextDayLabel)")
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 6) {
+                        Text(s.timeString)
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        if s.readyBy && s.turnOn {
+                            Text("READY BY")
+                                .font(.system(.caption2, design: .rounded, weight: .bold))
+                                .foregroundStyle(Theme.amber)
+                        }
+                    }
+                    Text("\(s.repeatSummary) · \(s.actionSummary)")
+                        .font(.footnote).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .buttonStyle(.plain)
+        .glassCard()
+        .sheet(isPresented: $showSchedules) { SchedulesView() }
+    }
+
+    /// The soonest future firing across all enabled schedules (within a week).
+    private var nextSchedule: (schedule: SaunaSchedule, fire: Date)? {
+        let now = Date()
+        let cal = Calendar.current
+        var best: (SaunaSchedule, Date)?
+        for offset in 0..<8 {
+            guard let day = cal.date(byAdding: .day, value: offset, to: now) else { continue }
+            for s in schedules.schedules where s.enabled {
+                // currentTempF: nil → cold-start estimate (a future day, not "now")
+                if let start = ScheduleEngine.startDate(for: s, on: day, currentTempF: nil,
+                                                        heating: heating, calendar: cal),
+                   start > now, best == nil || start < best!.1 {
+                    best = (s, start)
+                }
+            }
+        }
+        return best.map { (schedule: $0.0, fire: $0.1) }
+    }
+
+    private var nextDayLabel: String {
+        guard let fire = nextSchedule?.fire else { return "" }
+        let cal = Calendar.current
+        if cal.isDateInToday(fire) { return "Today" }
+        if cal.isDateInTomorrow(fire) { return "Tomorrow" }
+        return fire.formatted(.dateTime.weekday(.wide))
+    }
+}

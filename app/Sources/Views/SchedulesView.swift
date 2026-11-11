@@ -16,9 +16,16 @@ struct SchedulesView: View {
                     }
                 }
                 ForEach(store.schedules) { s in
-                    ScheduleRow(schedule: s)
-                        .contentShape(Rectangle())
-                        .onTapGesture { editing = s }
+                    HStack(spacing: 8) {
+                        // Left content edits; the toggle is a separate tap target so it
+                        // doesn't trigger the editor.
+                        Button { editing = s } label: { ScheduleRow(schedule: s) }
+                            .buttonStyle(.plain)
+                        Toggle("", isOn: Binding(get: { s.enabled },
+                                                 set: { _ in store.toggle(s) }))
+                            .labelsHidden()
+                            .tint(Theme.ember)
+                    }
                 }
                 .onDelete { idx in idx.map { store.schedules[$0] }.forEach(store.delete) }
             }
@@ -41,7 +48,6 @@ struct SchedulesView: View {
 }
 
 private struct ScheduleRow: View {
-    @Environment(SchedulesStore.self) private var store
     let schedule: SaunaSchedule
     var body: some View {
         HStack(spacing: 12) {
@@ -69,14 +75,10 @@ private struct ScheduleRow: View {
                 }
             }
             Spacer()
-            Toggle("", isOn: Binding(
-                get: { schedule.enabled },
-                set: { _ in store.toggle(schedule) })
-            )
-            .labelsHidden()
-            .tint(Theme.ember)
         }
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .opacity(schedule.enabled ? 1 : 0.6)
     }
 }
