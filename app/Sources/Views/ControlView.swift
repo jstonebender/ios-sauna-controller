@@ -148,7 +148,7 @@ private struct StartStopButton: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: heating ? "stop.fill" : "flame.fill")
-                Text(heating ? "Stop" : "Start Heating")
+                Text(heating ? "Heating" : "Start Heating")
                     .font(.system(.title3, design: .rounded, weight: .bold))
             }
             .frame(maxWidth: .infinity).frame(height: 62)
