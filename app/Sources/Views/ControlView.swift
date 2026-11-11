@@ -86,7 +86,7 @@ private struct ConnectionBar: View {
 private struct HeroGauge: View {
     let state: SaunaState
     private let sweep = 0.75            // 270°
-    private let floorF = 75.0, ceilF = 170.0   // FD-5 max setpoint
+    private let floorF = 100.0, ceilF = 170.0  // arc spans the usable sauna range → FD-5 max
 
     private func frac(_ f: Int?) -> Double {
         guard let f else { return 0 }
