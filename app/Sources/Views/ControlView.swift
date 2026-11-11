@@ -147,16 +147,25 @@ private struct StartStopButton: View {
             Task { heating ? await store.stop() : await store.start() }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: heating ? "stop.fill" : "flame.fill")
-                Text(heating ? "Heating" : "Start Heating")
-                    .font(.system(.title3, design: .rounded, weight: .bold))
+                Image(systemName: heating ? "stop.circle.fill" : "flame.fill")
+                    .font(.title3.weight(.bold))
+                if heating {
+                    VStack(spacing: 0) {
+                        Text("Heating").font(.system(.title3, design: .rounded, weight: .bold))
+                        Text("Tap to turn off")
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                } else {
+                    Text("Start Heating").font(.system(.title3, design: .rounded, weight: .bold))
+                }
             }
             .frame(maxWidth: .infinity).frame(height: 62)
-            .foregroundStyle(heating ? Theme.textPrimary : Theme.bg0)
+            .foregroundStyle(heating ? Theme.ember : Theme.bg0)
             .background {
                 if heating {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.ultraThinMaterial)
-                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.stroke))
+                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.ember.opacity(0.14))
+                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.ember.opacity(0.55), lineWidth: 1.5))
                 } else {
                     RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.emberGradient)
                 }
@@ -205,21 +214,61 @@ private struct ControlFeedback: View {
 private struct TargetCard: View {
     @Environment(SaunaStore.self) private var store
     let state: SaunaState
+    @State private var text = ""
+    @FocusState private var editing: Bool
+
+    private var displayed: Int { state.targetTempF ?? 150 }
+
     var body: some View {
         HStack {
             Label("Target", systemImage: "target").foregroundStyle(Theme.textSecondary)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
             Spacer()
-            stepButton("minus") { Task { await store.nudgeTarget(-1) } }
-            Text("\(state.targetTempF ?? 150)°")
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .foregroundStyle(Theme.textPrimary).monospacedDigit()
-                .frame(minWidth: 78)
-                .contentTransition(.numericText(value: Double(state.targetTempF ?? 0)))
-            stepButton("plus") { Task { await store.nudgeTarget(1) } }
+            stepButton("minus") { editing = false; Task { await store.nudgeTarget(-1) } }
+            // Tap to type a setpoint directly; +/- still nudge by 1°.
+            HStack(spacing: 1) {
+                TextField("", text: $text)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .focused($editing)
+                    .fixedSize()
+                    .frame(minWidth: 52)
+                Text("°")
+            }
+            .font(.system(size: 30, weight: .semibold, design: .rounded))
+            .foregroundStyle(Theme.textPrimary).monospacedDigit()
+            .padding(.horizontal, 8).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(editing ? Theme.ember.opacity(0.16) : Color.white.opacity(0.06)))
+            .contentShape(Rectangle())
+            .onTapGesture { editing = true }
+            stepButton("plus") { editing = false; Task { await store.nudgeTarget(1) } }
         }
         .glassCard()
+        .onAppear { text = String(displayed) }
+        .onChange(of: state.targetTempF) { _, new in
+            if !editing { text = String(new ?? 150) }   // live poll updates the field only when not typing
+        }
+        .onChange(of: editing) { _, focused in
+            if focused { text = String(displayed) } else { commit() }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { editing = false }
+            }
+        }
     }
+
+    /// Parse the typed digits, clamp to the FD-5 setpoint range, and write once.
+    private func commit() {
+        let digits = text.filter(\.isNumber)
+        guard let raw = Int(digits) else { text = String(displayed); return }
+        let clamped = max(86, min(170, raw))
+        text = String(clamped)
+        if clamped != state.targetTempF { Task { await store.setTarget(clamped) } }
+    }
+
     private func stepButton(_ icon: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon).font(.title3.weight(.bold)).foregroundStyle(Theme.ember)
