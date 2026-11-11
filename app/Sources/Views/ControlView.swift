@@ -310,8 +310,10 @@ private struct TimerCard: View {
             } label: {
                 DropdownPill(text: valueText)
             }
+            .disabled(!state.power)   // device resets the timer on power-on; set it after turning on
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(state.power ? 1 : 0.6)
         .glassCard(14)
     }
 }
