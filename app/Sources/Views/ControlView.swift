@@ -13,8 +13,10 @@ struct ControlView: View {
                 StartStopButton()
                 ControlFeedback()
                 TargetCard(state: s)
-                TimerCard(state: s)
-                LightsCard(state: s)
+                HStack(alignment: .top, spacing: 12) {
+                    TimerCard(state: s)
+                    LightsCard(state: s)
+                }
                 SonosCard()
             }
             .padding(.horizontal, 18)
@@ -284,37 +286,34 @@ private struct TimerCard: View {
     @Environment(SaunaStore.self) private var store
     let state: SaunaState
     private let presets = [25, 60, 75, 90]
+
+    private var valueText: String { state.timerSetMin.map { "\($0) min" } ?? "Off" }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Timer", systemImage: "timer").foregroundStyle(Theme.textSecondary)
-                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                Spacer()
-                if let deadline = store.timerDeadline, deadline > .now {
-                    // self-ticking countdown — no dependence on the 2s poll
-                    HStack(spacing: 4) {
-                        Text(timerInterval: Date.now...deadline, countsDown: true)
-                            .monospacedDigit()
-                        Text("left")
-                    }
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(Theme.amber)
-                }
-            }
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Timer", systemImage: "timer").foregroundStyle(Theme.textSecondary)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+            Menu {
+                Button("Off") { Task { await store.setTimer(0) } }
                 ForEach(presets, id: \.self) { m in
-                    let on = state.timerSetMin == m
-                    Button { Task { await store.setTimer(m) } } label: {
-                        Text("\(m)m").font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            .frame(maxWidth: .infinity).frame(height: 40)
-                            .foregroundStyle(on ? Theme.bg0 : Theme.textPrimary)
-                            .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .fill(on ? AnyShapeStyle(Theme.amber) : AnyShapeStyle(Color.white.opacity(0.06))))
-                    }.buttonStyle(.plain)
+                    Button("\(m) min") { Task { await store.setTimer(m) } }
                 }
+            } label: {
+                DropdownPill(text: valueText)
+            }
+            if let deadline = store.timerDeadline, deadline > .now {
+                // self-ticking countdown — no dependence on the 2s poll
+                HStack(spacing: 4) {
+                    Image(systemName: "hourglass").font(.caption2)
+                    Text(timerInterval: Date.now...deadline, countsDown: true).monospacedDigit()
+                    Text("left")
+                }
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(Theme.amber)
             }
         }
-        .glassCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(14)
     }
 }
 
@@ -323,59 +322,65 @@ private struct TimerCard: View {
 private struct LightsCard: View {
     @Environment(SaunaStore.self) private var store
     let state: SaunaState
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("Lighting", systemImage: "lightbulb.led").foregroundStyle(Theme.textSecondary)
-                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                Spacer()
-                if !state.power {
-                    // the FD-5 ignores light changes while powered off
-                    Text("Turn the sauna on first")
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            HStack(spacing: 6) {
-                ForEach(ChromaPalette.solids, id: \.value) { c in
-                    let on = state.lightsOn && state.chromoColor == c.value
-                    Button { Task { await store.setChromo(c.value) } } label: {
-                        Capsule().fill(c.color)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 32)
-                            .overlay(Capsule().strokeBorder(.white.opacity(on ? 0.95 : 0.12), lineWidth: on ? 3 : 1))
-                            .emberGlow(c.color, radius: 10, active: on)
-                    }.buttonStyle(.plain)
-                }
-            }
-            HStack(spacing: 10) {
-                Toggle(isOn: Binding(get: { state.lightsScrolling },
-                                     set: { v in Task { await store.setChromo(v ? ChromaPalette.scroll : "White") } })) {
-                    Label("Cycle", systemImage: "sparkles")
-                }
-                .toggleStyle(PillToggle())
-                Toggle(isOn: Binding(get: { state.lightsOn },
-                                     set: { v in Task { await store.setChromo(v ? "White" : ChromaPalette.off) } })) {
-                    Label("Lights", systemImage: "lightbulb.fill")
-                }
-                .toggleStyle(PillToggle())
-            }
+
+    private var swatch: Color? {
+        guard state.power, !state.lightsScrolling else { return nil }
+        return ChromaPalette.color(for: state.chromoColor)
+    }
+    private var valueText: String {
+        guard state.power else { return "Off" }
+        if state.lightsScrolling { return "Cycle" }
+        if state.lightsOn {
+            return ChromaPalette.solids.first { $0.value == state.chromoColor }?.name ?? "On"
         }
-        .disabled(!state.power)
-        .opacity(state.power ? 1 : 0.5)
-        .glassCard()
+        return "Off"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Lighting", systemImage: "lightbulb.led").foregroundStyle(Theme.textSecondary)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+            Menu {
+                // the FD-5 ignores light changes while powered off
+                Button("Off") { Task { await store.setChromo(ChromaPalette.off) } }
+                ForEach(ChromaPalette.solids, id: \.value) { c in
+                    Button(c.name) { Task { await store.setChromo(c.value) } }
+                }
+                Button("Cycle") { Task { await store.setChromo(ChromaPalette.scroll) } }
+            } label: {
+                DropdownPill(text: valueText, swatch: swatch, scrolling: state.lightsScrolling)
+            }
+            .disabled(!state.power)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(state.power ? 1 : 0.6)
+        .glassCard(14)
     }
 }
 
-private struct PillToggle: ToggleStyle {
-    func makeBody(configuration c: Configuration) -> some View {
-        Button { c.isOn.toggle() } label: {
-            c.label.font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .frame(maxWidth: .infinity).frame(height: 44)
-                .foregroundStyle(c.isOn ? Theme.bg0 : Theme.textPrimary)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(c.isOn ? AnyShapeStyle(Theme.amber) : AnyShapeStyle(Color.white.opacity(0.06))))
-        }.buttonStyle(.plain)
+/// Compact dropdown trigger shared by the Timer and Lighting cards.
+private struct DropdownPill: View {
+    let text: String
+    var swatch: Color? = nil
+    var scrolling: Bool = false
+    var body: some View {
+        HStack(spacing: 8) {
+            if scrolling {
+                Image(systemName: "sparkles").font(.subheadline).foregroundStyle(Theme.amber)
+            } else if let swatch {
+                Circle().fill(swatch).frame(width: 18, height: 18)
+                    .overlay(Circle().strokeBorder(.white.opacity(0.25)))
+            }
+            Text(text)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Spacer(minLength: 2)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.caption2).foregroundStyle(Theme.textTertiary)
+        }
+        .padding(.horizontal, 12).frame(height: 44)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.06)))
     }
 }
 
