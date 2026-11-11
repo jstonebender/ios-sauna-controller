@@ -88,13 +88,13 @@ private struct HeroGauge: View {
         ZStack {
             // track
             Circle().trim(from: 0, to: sweep)
-                .stroke(Color.white.opacity(0.07), style: .init(lineWidth: 18, lineCap: .round))
+                .stroke(Color.white.opacity(0.07), style: .init(lineWidth: 12, lineCap: .round))
                 .rotationEffect(.degrees(135))
             // fill — hue tracks actual heat (cool when cold → ember when hot)
             Circle().trim(from: 0, to: sweep * curFrac)
                 .stroke(LinearGradient(colors: [heat.mix(Theme.amber, 0.35), heat],
                                        startPoint: .topLeading, endPoint: .bottomTrailing),
-                        style: .init(lineWidth: 18, lineCap: .round))
+                        style: .init(lineWidth: 12, lineCap: .round))
                 .rotationEffect(.degrees(135))
                 .emberGlow(heat, radius: 24, active: curFrac > 0.05)
             // target marker
@@ -107,7 +107,7 @@ private struct HeroGauge: View {
                     .foregroundStyle(state.heater ? AnyShapeStyle(Theme.emberGradient) : AnyShapeStyle(Theme.textTertiary))
                     .emberGlow(Theme.ember, radius: 10, active: state.heater)
                 Text(state.currentTempF.map { "\($0)" } ?? "—")
-                    .font(.system(size: 88, weight: .bold, design: .rounded))
+                    .font(.system(size: 58, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
                     .contentTransition(.numericText(value: Double(state.currentTempF ?? 0)))
                     .monospacedDigit()
@@ -118,7 +118,7 @@ private struct HeroGauge: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
-        .frame(height: 300)
+        .frame(height: 200)
         .padding(.horizontal, 8)
     }
 }
