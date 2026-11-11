@@ -47,6 +47,8 @@ struct SessionButton: View {
     @AppStorage(SessionRunner.key) private var activeStart: Double = 0
 
     private var inSession: Bool { activeStart > 0 }
+    // Can't "Get In" a sauna that's off; "Get Out" always works once in a session.
+    private var disabled: Bool { !inSession && !store.state.power }
 
     var body: some View {
         Button {
@@ -66,5 +68,7 @@ struct SessionButton: View {
             .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(Theme.stroke))
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
     }
 }
