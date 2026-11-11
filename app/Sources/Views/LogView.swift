@@ -69,33 +69,8 @@ struct LogView: View {
         }.buttonStyle(.plain)
     }
 
-    private func getIn() {
-        Haptics.success()
-        activeStart = Date().timeIntervalSince1970
-        Task {
-            await store.beginSession()
-            await store.getInScene()   // interior lights on · chroma red · 25-min timer
-            await SaunaActivityController.shared.beginSession(Date(timeIntervalSince1970: activeStart), state: store.state)
-        }
-    }
-
-    private func getOut() {
-        Haptics.success()
-        let start = Date(timeIntervalSince1970: activeStart)
-        let end = Date()
-        activeStart = 0
-        Task {
-            let result = await store.endSession()   // record the peak before the heat goes off
-            let session = SaunaSession(start: start, end: end,
-                                       peakTempF: result?.peakTempF ?? store.state.currentTempF,
-                                       targetTempF: store.state.targetTempF)
-            ctx.insert(session)
-            try? ctx.save()
-            await store.stop()   // Get Out = done with the sauna: power + heater off, same as Stop
-            await HealthKitManager.shared.log(start: start, end: end, peakTempF: session.peakTempF)
-            await SaunaActivityController.shared.endSession(state: store.state)
-        }
-    }
+    private func getIn() { SessionRunner.getIn(store: store) }
+    private func getOut() { SessionRunner.getOut(store: store, ctx: ctx) }
 
     // MARK: stats
 

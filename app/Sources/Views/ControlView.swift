@@ -10,6 +10,7 @@ struct ControlView: View {
                 ConnectionBar()
                 HeroGauge(state: s)
                 StartStopButton()
+                SessionButton()
                 ControlFeedback()
                 TargetCard(state: s)
                 HStack(alignment: .top, spacing: 12) {
