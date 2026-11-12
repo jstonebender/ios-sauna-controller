@@ -4,12 +4,12 @@ A native **iPhone app** plus a small **home bridge** for controlling a **Finnmar
 (Tuya‑based) infrared sauna entirely over your **local network** — no OEM cloud, live
 temperature, one‑screen control, session logging, Apple Health, and an in‑app warm‑up scheduler.
 
-> **Forked from [ember](https://github.com/mattsmcnulty/ember)** by Matt McNulty (MIT), which
-> was built for a **Sun Home Eclipse 2**. This project keeps ember's architecture (a pure‑Swift
-> app that talks only to a local Python bridge) and **remaps everything to the Finnmark FD‑5** —
-> a different Tuya device with its own datapoint map, light palette, and quirks. For the deep
-> reverse‑engineering backstory (getting the `localKey`, the Tuya LAN v3.5 handshake, the
-> momentary‑toggle gotchas), see the **[original ember README](https://github.com/mattsmcnulty/ember)**.
+> A separate product, built on ideas from **[ember](https://github.com/mattsmcnulty/ember)** by
+> Matt McNulty (MIT) — which targets a **Sun Home Eclipse 2**. This app keeps that architecture
+> (a pure‑Swift app talking only to a local Python bridge) but is **its own thing for the Finnmark
+> FD‑5**: a different Tuya device with its own datapoint map, light palette, scheduler, and
+> quirks. For the original Tuya reverse‑engineering backstory (getting the `localKey`, the Tuya
+> LAN v3.5 handshake, the momentary‑toggle gotchas), see **[ember's README](https://github.com/mattsmcnulty/ember)**.
 
 <p align="center">
   <img src="docs/media/control-off.png" width="31%" alt="Control screen — idle, Start Heating">
@@ -139,6 +139,7 @@ Finnmark, Sun Home Saunas, Edge Theory Labs, or Tuya.
 
 ## License & credits
 
-MIT — see [`LICENSE`](LICENSE). Built on **[ember](https://github.com/mattsmcnulty/ember)** by
-Matt McNulty (MIT); all the original work on the Tuya LAN approach, Live Activity plumbing, and
-the app's foundations is his. This fork adapts it to the Finnmark FD‑5.
+MIT — see [`LICENSE`](LICENSE). Credit to **[ember](https://github.com/mattsmcnulty/ember)** by
+Matt McNulty (MIT) for the Tuya LAN approach and Live Activity plumbing this started from. This
+is a separate product for the Finnmark FD‑5 — not a fork tracking ember, and not a source of
+pull requests back to it.
