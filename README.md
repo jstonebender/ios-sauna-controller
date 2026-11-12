@@ -1,334 +1,144 @@
-# IOS Sauna Controller
+# IOS Sauna Controller — Finnmark FD‑5
 
-An iPhone app plus a small home bridge for controlling a **Finnmark FD-5** (Tuya-based) infrared sauna.
+A native **iPhone app** plus a small **home bridge** for controlling a **Finnmark FD‑5**
+(Tuya‑based) infrared sauna entirely over your **local network** — no OEM cloud, live
+temperature, one‑screen control, session logging, Apple Health, and an in‑app warm‑up scheduler.
 
-Based on [ember](https://github.com/mattsmcnulty/ember) by Matt McNulty (MIT license), which was
-built for a Sun Home Eclipse 2. The bridge (`saunad/`) and app (`app/`) are remapped to the FD-5 —
-its DP map and hands-on test notes are in [`saunad/schema.json`](saunad/schema.json). The original
-README follows; its DP map and "hard parts" describe the Eclipse 2 (kept for reference in
-`saunad/schema-eclipse2.json`). `homebridge-sauna/` has not been remapped yet.
-
----
-
-<p align="center"><img src="docs/media/icon.png" width="104" alt="Ember app icon"><br/><b>Ember</b></p>
-
-**Local-first iOS control for an infrared sauna — live Lock-Screen temperature, one-screen
-heat / light / timer / audio, session logging, and Apple Health.**
-
-A bespoke, native **iOS app + local bridge** that fully controls a **Sun Home Eclipse 2**
-infrared sauna — replacing the cloud-only OEM "Sun Home" app with a polished, private,
-**local-first** experience: live Lock-Screen temperature (Live Activity), one-screen
-heat / light / timer / audio control, get-in/get-out session logging, and Apple Health.
+> **Forked from [ember](https://github.com/mattsmcnulty/ember)** by Matt McNulty (MIT), which
+> was built for a **Sun Home Eclipse 2**. This project keeps ember's architecture (a pure‑Swift
+> app that talks only to a local Python bridge) and **remaps everything to the Finnmark FD‑5** —
+> a different Tuya device with its own datapoint map, light palette, and quirks. For the deep
+> reverse‑engineering backstory (getting the `localKey`, the Tuya LAN v3.5 handshake, the
+> momentary‑toggle gotchas), see the **[original ember README](https://github.com/mattsmcnulty/ember)**.
 
 <p align="center">
-  <img src="docs/media/control-off.png" width="248" alt="Control screen — idle, Start Heating">
-  &nbsp;&nbsp;
-  <img src="docs/media/control-preheating.png" width="248" alt="Control screen — preheating with live temperature">
+  <img src="docs/media/control-off.png" width="31%" alt="Control screen — idle, Start Heating">
+  &nbsp;
+  <img src="docs/media/control-preheating.png" width="31%" alt="Control screen — preheating with ETA and next schedule">
+  &nbsp;
+  <img src="docs/media/schedules.png" width="31%" alt="Schedules — weekly 'ready by' warm-ups">
 </p>
 
-<!-- A Live Activity / Dynamic Island GIF is the single highest-signal addition — drop one into
-     docs/media/ (see docs/media/README.md) and add it above. -->
-
-> Personal project. ember controls **one specific sauna on its owner's own network**.
-> Nothing reverse-engineered ships in the app; the device key is per-user config kept out of
-> git. **Controls a heating appliance — no warranty, use at your own risk. Not affiliated with
-> Sun Home Saunas, Edge Theory Labs, or Tuya.** See [Legal & scope](#legal--scope).
-
 ---
 
-## Status
+## What it does
 
-| Area | State |
-|---|---|
-| Local control (power, heater, target, timer, chromotherapy, interior lights, Sonos) | ✅ working on device (iPhone 16 Pro Max, iOS 26) |
-| Live Activity (Lock Screen + Dynamic Island) — live temp via APNs, heat dial, status, chroma accent, session counter | ✅ |
-| Session logging + Apple Health (`HKWorkout`) | ✅ |
-| Live temperature anywhere (APNs push, nothing exposed) | ✅ |
+- **Control screen** — power, start/stop heat, a temperature dial, a tap‑to‑type **target**,
+  and compact **Timer** and **Lighting** dropdowns. Everything on one screen, no scrolling.
+- **Status at a glance** — a **preheat ETA** ("ready in ~N min", from a learned heat‑up rate)
+  and the **next scheduled** warm‑up, shown together.
+- **Get In / Get Out** — one tap starts a session (applies your default scene) and logs it;
+  Get Out ends it, records the session, and writes an **Apple Health** workout.
+- **Live Activity** — live cabin temperature and status on the Lock Screen / Dynamic Island
+  (via APNs), with an on‑device session timer.
+- **Scheduler** *(in progress)* — an in‑app "cron GUI": weekly or one‑time schedules that set
+  power / target / light / timer, including a **"ready by"** mode that back‑calculates the start
+  time from a **learned** preheat rate. Schedules are stored on‑device today; actually *firing*
+  them moves to `saunad` (see below).
+- **Defaults & presets** — a default target / timer / light applied on start, and an editable
+  list of quick‑pick timer durations, all in Settings.
+- **HomeKit** *(optional)* — a Homebridge plugin exposes the sauna as a thermostat + lights +
+  power switch.
 
----
-
-## Why it exists
-
-The stock Sun Home app (a rebrand of the Edge Theory Labs / Tuya OEM app) is **cloud-only**
-and lacks a Live Activity, logging, Health, scheduling, and any unified control of the
-sauna's lighting alongside the cabin's new Sonos audio. ember does all of that **without
-depending on Sun Home's cloud** — control happens locally over your LAN, and only the
-background temperature push rides the internet (via Apple's APNs).
+The audio in the FD‑5 is **Bluetooth** and controlled at the cabin / from your phone directly —
+it is not on the Tuya API, so the app intentionally has no speaker controls.
 
 ---
 
 ## Architecture
 
-Three components (plus an optional HomeKit face). The iOS app **never speaks Tuya** — it only
-talks to `saunad` over HTTP.
+The iOS app **never speaks Tuya.** It only talks to `saunad` over plain HTTP on your LAN;
+`saunad` owns the sauna's single Tuya socket and pushes Live Activity updates via APNs.
 
 ```
-┌────────────┐   HTTP/JSON over the LAN              ┌─────────────────────┐  Tuya LAN v3.5   ┌──────────┐
-│  ember     │  GET /state   POST /control           │  saunad             │  TCP 6668        │  Sauna   │
-│  iOS app   │ ───────────────────────────────────▶  │  Python on an       │  (single conn,   │  Tuya    │
-│ (SwiftUI)  │ ◀───────────────────────────────────  │  always-on box      │  reconnect/poll) │  ESP32   │
-└────┬───────┘   POST /activity/token (push token)    └──────────┬──────────┘ ───────────────▶ │ @ .1.12  │
-     │                                                           │ HTTP/2 + APNs .p8            └──────────┘
-     │  Live Activity (Lock Screen / Dynamic Island)             ▼
-     │ ◀──────────────────────  APNs  ◀───────────────  api.push.apple.com
-     ▼
-  On-device session counter (Text(timerInterval:)) — self-updating, no network
+┌────────────┐   HTTP/JSON over the LAN     ┌──────────────────┐   Tuya LAN v3.5   ┌──────────┐
+│  iOS app   │  GET /state  POST /control   │  saunad          │   (AES‑GCM,       │  Finnmark│
+│ (SwiftUI)  │ ───────────────────────────▶ │  Python, on an   │   single conn,    │  FD‑5    │
+│            │ ◀─────────────────────────── │  always‑on box   │   reconnect/poll) │  (Tuya)  │
+└─────┬──────┘   POST /activity/token        └────────┬─────────┘ ────────────────▶ └──────────┘
+      │  Live Activity (Lock Screen /                  │  APNs (.p8 / ES256)
+      ▼  Dynamic Island)  ◀───── APNs ◀──────── api.push.apple.com
 ```
 
-- **`app/`** — SwiftUI app (iOS 26, Swift 6). Talks only to saunad; renders the Live Activity.
-- **`saunad/`** — Python (FastAPI + [tinytuya](https://github.com/jasonacox/tinytuya)) bridge on
-  any always-on box — Raspberry Pi (systemd/Docker) or a Mac mini (launchd). **Sole owner** of
+- **`app/`** — SwiftUI app (iOS 26, Swift 6). Talks only to `saunad`; renders the Live Activity.
+- **`saunad/`** — Python ([FastAPI](https://fastapi.tiangolo.com) +
+  [tinytuya](https://github.com/jasonacox/tinytuya)) bridge on any always‑on box. Sole owner of
   the sauna's single Tuya LAN socket; exposes a small HTTP API; pushes Live Activity updates via
-  APNs; controls the cabin **Sonos** ("Sauna") via `soco`.
-  Full setup + API in [`saunad/README.md`](saunad/README.md).
-- **`homebridge-sauna/`** — a zero-dependency TypeScript **Homebridge plugin** that puts the
-  sauna in **HomeKit**: a thermostat tile (60–175 °F), interior lights whose color picks snap
-  to the sauna's 7 real chroma solids, and a power switch — Siri, scenes, automations, and
-  (with a home hub) remote control, all as just **another HTTP client of saunad**.
-  See [`homebridge-sauna/README.md`](homebridge-sauna/README.md).
-- **The sauna** — a Tuya Wi-Fi controller speaking the **Tuya LAN protocol v3.5** (AES-GCM,
-  session-key handshake), on TCP port 6668.
+  APNs. Full setup + API in **[`saunad/README.md`](saunad/README.md)**.
+- **`homebridge-sauna/`** — a TypeScript **Homebridge plugin** (platform `FinnmarkSauna`) that
+  puts the sauna in **HomeKit** as another HTTP client of `saunad`.
+  See **[`homebridge-sauna/README.md`](homebridge-sauna/README.md)**.
 
-**Why a bridge at all:** iOS won't let an app poll a LAN device in the background often enough
-to drive a live readout, and APNs (the only reliable background path for a Live Activity) can't
-be reached peer-to-peer on the LAN. saunad polls the sauna and pushes updates — and because the
-device allows **only one** local connection at a time, having a single always-on owner is
-mandatory, not optional. It also keeps the shipped app pure-Swift with **no Tuya crypto**.
+**Why a bridge:** iOS can't poll a LAN device in the background often enough for a live readout,
+and the Tuya device allows **only one** local connection at a time — so a single always‑on owner
+is mandatory. It also keeps the shipped app pure‑Swift with **no Tuya crypto**.
 
 ---
 
-## The hard parts (where the work actually was)
+## FD‑5 datapoint map
 
-This device did not want to be controlled. Roughly in the order we fought them:
-
-### 1. Getting the `localKey` (the gate)
-Tuya LAN control is impossible without the device's 16-byte `localKey`, and the sauna **never
-appears in Smart Life** (it's provisioned to the OEM app's isolated Tuya account). cert-pinned,
-app-encrypted traffic killed the proxy approach. What worked: an **Android emulator + Frida**,
-hooking the live `com.thingclips.smart.sdk.bean.DeviceBean` inside the Sun Home APK to read the
-key out of runtime memory — **no re-pair**, so the OEM account/app stayed intact. The key + the
-~8 GB toolchain stay out of the app entirely; the key is per-user config in a gitignored file.
-
-### 2. Tuya LAN protocol v3.5
-v3.5 isn't the simpler 3.3 — it does an AES-GCM session-key handshake. `tinytuya` handles it,
-but it means saunad must hold a live, authenticated socket and can't just fire-and-forget.
-
-### 3. The device lies about its own state (momentary toggles)
-**`power` (DP110) and `heater` (DP114) are momentary toggles, not levels** — *writing* them
-flips the current state regardless of the value sent. In early mapping we only ever sent the
-opposite value, so they looked like normal booleans. The bug surfaced as "tap **Start** → sauna
-turns *off*": Start sent `power: true` while power was already on, which toggled it off. Fix:
-saunad drives by **desired state** — it reads the real status (`power`'s true status is the
-read-only **DP20**, not DP110) and only writes when the state must change.
-
-### 4. The persistent socket drifts stale
-A long-lived Tuya socket on this device starts returning **stale/partial frames** — the
-temperature would update while `power`/`heater` froze at an old value, so the app faithfully
-showed "off" while the sauna was on and heating. A *fresh* connection always reads correctly,
-so saunad now **reconnects every poll** (still single-owner, never two sockets at once).
-
-### 5. Poll-vs-control races
-The app polls `/state` every 2 s and also issues optimistic control writes. A poll already in
-flight when you tapped a button would land a beat later and overwrite the fresh result with
-stale data. Fixed with a **control epoch** (a poll whose epoch changed mid-flight is discarded)
-plus a **busy guard** and saunad **optimistically reflecting accepted writes** so `/control`
-never returns a transiently-stale value.
-
-### 6. The chromotherapy palette: panel order ≠ DP values
-The ceiling LED's panel **cycle order is not the DP21 value order** — which sent us in circles
-mapping it by ear. The real DP21 map (verified hands-on, below) has only 7 solid colors;
-`mode1` is a no-op and `mode8`/`mode9` read back white. The app now ships the true palette and a
-shared `ChromaPalette` used by both the app and the Live Activity accent.
-
-### 7. "Footwell" is actually all interior lights
-Over the **LAN**, writing **DP113 toggles *all* interior lights** (ceiling chroma + footwell)
-together — but the **panel's** footwell button (same DP) only affects the footwell, as hardware.
-So there's no footwell-only control via the API; the app surfaces DP113 as **"Interior."**
-
-### 8. Power and heat are two independent things
-The UI originally mushed them into one "Start Heating / Stop." They're independent and both are
-stable states, so the app now has a small **Power** toggle (top-left) plus the big **Heat**
-button: Start auto-powers on, Stop fully powers off, and Power is the independent override.
-
-### 9. We mapped it all hands-on with an in-app Debug tab
-Once it was clear the device's behavior was subtle, we shipped a temporary **Debug DP tab**
-(every raw DP live + a generic "set DP N = value" pad) so the human at the sauna could poke and
-annotate directly. That's how the palette, DP113, and the toggle behavior were nailed down. It's now behind
-`#if DEBUG`, so release builds don't ship it.
-
-Also handled along the way: APNs token-auth Live Activities (`.p8` / ES256 JWT, per-activity +
-push-to-start tokens), Swift 6 strict-concurrency around ActivityKit, and a heater "deadman"
-safety option in saunad.
-
----
-
-## DP map (reference)
-
-Verified live, 2026-06. Full detail + types in [`saunad/schema.json`](saunad/schema.json).
+Remapped and verified hands‑on for the Finnmark FD‑5 (these differ from the Eclipse 2 in ember).
 
 | DP | Meaning | Type | Notes |
 |---|---|---|---|
-| **110** | power (control) | bool — **momentary toggle** | a write *flips* power; drive by desired state |
-| **20** | power **status** | bool, read-only | the real on/off (use this to read power) |
-| **114** | heater | bool — momentary toggle | the heating element |
-| **106** / 109 | target temp °F / °C | int | setpoint (109 is the °C mirror) |
-| **104** / 103 | current temp °F / °C | int, read-only | |
-| **116** | timer set | int (min) | writable |
-| **105** | timer remaining | int (min), read-only | counts down while heating |
-| **108** | unit | enum `f`/`c` | |
-| **113** | interior lights | bool | LAN write = **all interior** (chroma + footwell); panel button = footwell-only |
-| **21** | chroma color | enum | `mode`=white · `mode2`=yellow · `mode3`=red · `mode4`=pink · `mode5`=blue · `mode6`=teal · `mode7`=green (`mode1` no-op, `mode8/9` white) |
-| **101** | rainbow | bool | slow morphing scene; turning it off resets to white |
-| 111 | *(vestigial)* | int | old Bluetooth-audio volume; unused (audio is via Sonos) — ignore |
-| — | exterior light | — | **panel-only — not in the Tuya protocol**, can't be controlled |
+| **102** | power | bool | cabin power; writing a color/timer only sticks while powered on |
+| **101** | heater | bool | the heating element (comes up off after a power‑on) |
+| **107** / 104 | target °F / °C | int | setpoint, 86–170 °F |
+| **108** / 106 | current °F / °C | int, read‑only | stale/absent while powered off |
+| **105** | timer | int (min) | writable **and** counts down while running (set == remaining), 0–90 |
+| **109** | unit | bool | true = °F |
+| **111** | light | enum | `White · Purple · Blue · Cyan · Green · Yellow · Red · Scroll · Orange · Magenta · Off` — applies only while powered on; a power‑on resets it to White |
 
 ---
 
 ## Repo layout
 
 ```
-app/                           # iOS app (SwiftUI, iOS 26, Swift 6) — xcodegen project
-├── project.yml                #   xcodegen spec (targets, signing, entitlements)
-├── Sources/
-│   ├── App/SaunaControllerApp.swift
-│   ├── Views/                 #   RootTabView (Control · Log · Debug), Control/Log/Settings/DebugView
-│   ├── Models/                #   SaunaState, SaunaStore (@Observable polling + optimistic + epoch guard),
-│   │                          #   AppSettings (UserDefaults), SaunaSession (SwiftData)
-│   ├── Net/BridgeClient.swift  #   async URLSession client to saunad
-│   ├── Activity/              #   SaunaActivityController — Live Activity + APNs token registration
-│   ├── Health/                #   HealthKitManager (HKWorkout)
-│   └── Design/Theme.swift     #   warm dark design system
-├── Shared/                    #   SaunaActivityAttributes (ContentState), ChromaPalette  (app + widget)
-├── Widget/SaunaControllerWidget.swift   #   Live Activity UI (Lock Screen + Dynamic Island)
-└── Assets.xcassets            #   AppIcon
-
-saunad/                        # Python bridge (FastAPI + tinytuya + soco + APNs) — see saunad/README.md
-├── app.py  sauna.py  apns.py  sonos.py  config.py  schema.json
-├── options.example.json       #   template; real options.json (localKey, apiKey, APNs) is gitignored
-└── deploy/                     #   install-native.sh (Linux systemd) + install-macos.sh (launchd)
-
-homebridge-sauna/              # HomeKit via Homebridge (TypeScript) — see homebridge-sauna/README.md
-├── src/                       #   platform + thermostat / lights (color-snap) / power accessories
-└── config.schema.json         #   Homebridge UI settings form
+app/                 # iOS app (SwiftUI, iOS 26, Swift 6) — xcodegen project
+  project.yml        #   xcodegen spec (targets, signing, build configs)
+  Sources/           #   RootTabView, ControlView, SchedulesView, Settings, Models, Net, Activity, Health
+  Shared/            #   ChromaPalette + Live Activity attributes (shared app ⇄ widget)
+  Widget/            #   Live Activity UI (Lock Screen + Dynamic Island)
+saunad/              # Python bridge (FastAPI + tinytuya + APNs) — see saunad/README.md
+homebridge-sauna/    # HomeKit via Homebridge (TypeScript) — FinnmarkSauna platform
+tools/               # local reverse‑engineering / device scratch (gitignored contents)
 ```
 
-Secrets — the `localKey`, the server `apiKey`, and the APNs `.p8` — live in **gitignored**
-files (`saunad/options.json`, `tools/phase0/devices.json`, `*.p8`). Never committed.
+Secrets — the Tuya `localKey`, the `saunad` `apiKey`, and the APNs `.p8` — live in **gitignored**
+files (`saunad/options.json`, `tools/.../devices.json`, `*.p8`). Nothing device‑specific is
+committed.
 
 ---
 
 ## Build & run
 
-### Getting your `localKey`
+1. **Get your `localKey`.** LAN control needs *your* device's `devId` + 16‑byte `localKey` + LAN
+   IP. Try the [tinytuya wizard](https://github.com/jasonacox/tinytuya#setup-wizard) first; if
+   the device never appears in Smart Life (OEM‑locked), read the key from the OEM app at runtime
+   (Android emulator + [Frida](https://frida.re), no re‑pair). The key **rotates** on re‑pair.
+2. **Run `saunad`** on an always‑on box and point it at your device — see
+   [`saunad/README.md`](saunad/README.md).
+3. **Build the app** with [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+   `cd app && xcodegen generate && open SaunaController.xcodeproj`, then set your signing team and
+   run. In the app's Settings, set the saunad **Address** (`http://<bridge-ip>:8765`).
 
-LAN control needs your device's 16-byte `localKey` — and you need **your own** device's
-(`devId` + `localKey` + its LAN IP), not the author's:
-
-- **First try — the tinytuya wizard.** `pip install tinytuya && python -m tinytuya wizard` pulls
-  your devices' keys through a free Tuya IoT cloud project. Works whenever the device can be
-  linked to a Smart Life / Tuya account. See
-  [tinytuya setup](https://github.com/jasonacox/tinytuya#setup-wizard).
-- **If the device never appears in Smart Life** (OEM-locked, as Sun Home's are), read the key
-  from the OEM app at runtime instead: an Android emulator running the OEM APK with
-  [Frida](https://frida.re) hooking the Tuya SDK's device bean — **no re-pair**, so your account
-  and pairing stay intact. This is how ember's key was obtained (see *The hard parts #1*).
-
-The `localKey` **rotates** on re-pair (and sometimes after firmware updates) — if local control
-suddenly breaks, re-extract it. The reverse-engineering scratch (`tools/phase0/`) is gitignored
-and ships with nothing; the steps above don't depend on it.
-
-### saunad (the bridge)
-See [`saunad/README.md`](saunad/README.md). Short version: copy `saunad/` to your always-on box,
-fill in `options.json` (`sauna.devId` / `sauna.localKey`, a long random `server.apiKey`, and
-optionally the APNs block), then `sudo bash deploy/install-native.sh` (Linux/systemd) or
-`sudo bash deploy/install-macos.sh` (macOS/launchd), and `curl http://localhost:8765/state`.
-
-### HomeKit (optional)
-If you run [Homebridge](https://homebridge.io), `homebridge-sauna/` adds the sauna to the Home
-app — thermostat, lights with color snapping, power switch, Siri, automations. Build + install
-from the packed tarball; see [`homebridge-sauna/README.md`](homebridge-sauna/README.md)
-(including the heater-safety note about `server.heaterMaxOnMinutes`).
-
-### Sauna Controller (the iOS app)
-Requires Xcode 26, [xcodegen](https://github.com/yonaskolb/XcodeGen), and an Apple Developer
-account (for on-device runs + APNs). The `.xcodeproj` is generated (gitignored).
-
-```bash
-cd app
-cp Local.example.xcconfig Local.xcconfig    # optional: bake your saunad URL + apiKey in as defaults (gitignored)
-export DEVELOPMENT_TEAM=YOURTEAMID          # your Apple Developer Team ID — xcodegen reads it
-xcodegen generate
-# build + install to a connected, Developer-Mode-enabled iPhone (automatic signing):
-# (find your device id with:  xcrun devicectl list devices)
-xcodebuild -project SaunaController.xcodeproj -scheme SaunaController \
-  -destination 'platform=iOS,id=<DEVICE_UDID>' -allowProvisioningUpdates -derivedDataPath build build
-xcrun devicectl device install app --device <DEVICE_ID> build/Build/Products/Debug-iphoneos/SaunaController.app
-```
-
-**Build it yourself:** set `DEVELOPMENT_TEAM` (above — add it to your shell profile or use direnv
-so you don't repeat it), and change the bundle-id prefix in `project.yml` (`com.mattmcnulty` → your
-own reverse-domain). Then sign into your Apple ID in Xcode, enable **Developer Mode** on the iPhone
-(Settings → Privacy & Security), and trust the developer profile.
-
-Point the app at your bridge **either** by copying `Local.example.xcconfig` → `Local.xcconfig`
-(gitignored) and filling in `SAUNAD_URL` + `SAUNAD_API_KEY` — baked in as the build-time default —
-**or** in the app's **Settings** at runtime (Settings always overrides and persists in UserDefaults).
-Note xcconfig treats `//` as a comment, so a URL's `//` must be written `http:/$()/host:port`.
-
-> Because this is a **development** build, the iPhone needs **Developer Mode** on to install
-> *and* run it, and the signing profile expires periodically. **TestFlight** is the way around
-> that — it runs without Developer Mode (90-day build refresh).
+A `Debug-FreeTeam` build config is included for installing on a device with a **free** Apple ID
+(it drops the Push / HealthKit entitlements a free team can't provision).
 
 ---
 
-## Remote access
+## Scope & safety
 
-Live temperature (the Live Activity) **works anywhere** — APNs delivers it over the internet with
-nothing exposed. Interactive *control* runs over the LAN; to reach it away from home, put saunad
-behind Tailscale (no inbound ports, no public exposure).
+Personal project. It controls **one specific sauna on its owner's own network**. The device key
+is per‑user config kept out of git; nothing reverse‑engineered ships in the app.
 
----
-
-## Legal & scope
-
-This is a **personal interoperability project** for a device its owner owns, on their own
-network — much like the local-control tooling thousands of Home Assistant users run. The shipped
-iOS app contains **no reverse-engineered or proprietary code**: it's clean original Swift, saunad
-uses the open-source `tinytuya`, and the `localKey` is per-user config you supply (extracted from
-your *own* device), never bundled. It is **not** an App Store product — that would require an
-official Tuya/Sun Home integration path, since OEM-locked devices can't be linked to a
-third-party Tuya cloud project. Don't use Sun Home / Tuya / Eclipse names or logos in any
-distributed build.
-
-**⚠️ Safety & no warranty.** ember controls a **heating appliance**. It's provided as-is under the
-MIT license with **no warranty** — use at your own risk, and never rely on it as a safety cutoff
-(the sauna's own timer and thermostat remain the primary controls). Not affiliated with, endorsed
-by, or connected to Sun Home Saunas, Edge Theory Labs, or Tuya.
-
-This MIT license covers ember's **own** source; bundled dependencies keep their own licenses
-([`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md)). **Sun Home, Eclipse, Edge Theory Labs,
-Tuya, Sonos, Apple, HealthKit, and WHOOP** are trademarks of their respective owners, used here
-nominally to describe interoperability — no affiliation or endorsement is implied.
+**This controls a heating appliance. No warranty — use at your own risk.** Not affiliated with
+Finnmark, Sun Home Saunas, Edge Theory Labs, or Tuya.
 
 ---
 
-## Acknowledgements
+## License & credits
 
-ember stands on a lot of other people's work:
-
-- **[tinytuya](https://github.com/jasonacox/tinytuya)** (Jason Cox) — the Tuya LAN v3.5 client
-  (AES-GCM session-key handshake) at the heart of saunad. Without it the local control doesn't exist.
-- **Prior art — DP maps:** [make-all/tuya-local](https://github.com/make-all/tuya-local) and
-  [bitswype/finnleo_ha](https://github.com/bitswype/finnleo_ha) — sibling Tuya sauna/heater maps
-  that gave the starting hypotheses I then verified hands-on for the Eclipse 2.
-- **[Frida](https://frida.re)** — dynamic instrumentation used to read the device `localKey` out
-  of the OEM app's memory (the gate the whole project hinged on).
-- **[SoCo](https://github.com/SoCo/SoCo)** — local Sonos control, no cloud account.
-- **[FastAPI](https://fastapi.tiangolo.com)** + **[Uvicorn](https://www.uvicorn.org)**,
-  **[httpx](https://www.python-httpx.org)**, **[PyJWT](https://github.com/jpadilla/pyjwt)** — the
-  saunad HTTP API, ASGI server, HTTP/2 APNs client, and ES256 token signing.
-- Apple's **ActivityKit** (Live Activities / Dynamic Island) and **HealthKit** (`HKWorkout`), plus
-  **APNs** for the background temperature push.
-- **[XcodeGen](https://github.com/yonaskolb/XcodeGen)** — generates the Xcode project from `project.yml`.
-
-Dependency licenses are listed in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+MIT — see [`LICENSE`](LICENSE). Built on **[ember](https://github.com/mattsmcnulty/ember)** by
+Matt McNulty (MIT); all the original work on the Tuya LAN approach, Live Activity plumbing, and
+the app's foundations is his. This fork adapts it to the Finnmark FD‑5.
