@@ -15,7 +15,8 @@
         "scope": "",
         "attribute": "4"
       },
-      "name": "光波",
+      "name": "Infrared (light wave)",
+      "name_oem": "光波",
       "typeSpec": {
         "type": "bool"
       }
@@ -30,7 +31,8 @@
         "scope": "",
         "attribute": "0"
       },
-      "name": "电源",
+      "name": "Power",
+      "name_oem": "电源",
       "typeSpec": {
         "type": "bool"
       }
@@ -43,7 +45,8 @@
       "extensions": {
         "scope": ""
       },
-      "name": "设置温度",
+      "name": "Set temperature",
+      "name_oem": "设置温度",
       "typeSpec": {
         "type": "value",
         "max": 75,
@@ -58,7 +61,8 @@
       "accessMode": "rw",
       "code": "settime",
       "description": "",
-      "name": "设置时间",
+      "name": "Set time",
+      "name_oem": "设置时间",
       "typeSpec": {
         "type": "value",
         "max": 90,
@@ -76,7 +80,8 @@
       "extensions": {
         "scope": ""
       },
-      "name": "当前温度 (℃)",
+      "name": "Current temperature (℃)",
+      "name_oem": "当前温度 (℃)",
       "typeSpec": {
         "type": "value",
         "max": 95,
@@ -94,7 +99,8 @@
       "extensions": {
         "scope": ""
       },
-      "name": "设置温度  (℉)",
+      "name": "Set temperature (℉)",
+      "name_oem": "设置温度  (℉)",
       "typeSpec": {
         "type": "value",
         "max": 170,
@@ -112,7 +118,8 @@
       "extensions": {
         "scope": ""
       },
-      "name": "当前温度  (℉)",
+      "name": "Current temperature (℉)",
+      "name_oem": "当前温度  (℉)",
       "typeSpec": {
         "type": "value",
         "max": 203,
@@ -130,7 +137,7 @@
       "extensions": {
         "scope": ""
       },
-      "name": "℃ / ℉",
+      "name": "Temperature unit (℃ / ℉)",
       "typeSpec": {
         "type": "bool"
       }
@@ -140,7 +147,8 @@
       "accessMode": "rw",
       "code": "colorno",
       "description": "",
-      "name": "彩灯",
+      "name": "Color light",
+      "name_oem": "彩灯",
       "typeSpec": {
         "type": "enum",
         "range": [
