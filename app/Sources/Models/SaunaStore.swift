@@ -184,6 +184,25 @@ final class SaunaStore {
         }
         await SaunaActivityController.shared.updateHeater(state.heater, state: state)  // preheat dial on the Lock Screen
     }
+    /// Start a session (power on + heat) with a SPECIFIC timer + end-action — used by the Timer
+    /// sheet's Apply so "configure, then start" works and Start Heating can't overwrite your
+    /// choice. Uses the default target + session light; the chosen end-action governs timer end.
+    func startTimed(minutes: Int, endAction: TimerEndAction) async {
+        Haptics.success()
+        let tgt = settings.defaultTargetF
+        let c = settings.defaultLightColor
+        timerEndAction = endAction
+        noteSessionTimer(minutes)
+        await control(.init(power: true, heater: true, targetTempF: tgt,
+                            timerMin: minutes > 0 ? minutes : nil,
+                            chromoColor: c == "Off" ? nil : c,
+                            timerEndAction: minutes > 0 ? endAction : nil)) {
+            $0.power = true; $0.heater = true; $0.targetTempF = tgt
+            if minutes > 0 { $0.timerSetMin = minutes; $0.timerRemainingMin = minutes }
+            $0.chromoColor = (c == "Off") ? "White" : c
+        }
+        await SaunaActivityController.shared.updateHeater(state.heater, state: state)
+    }
     func stop() async {
         Haptics.toggle()
         await control(.init(power: false, heater: false)) { $0.power = false; $0.heater = false }  // Stop = full off; Power toggle is the independent override

@@ -357,8 +357,17 @@ private struct TimerSetupSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
-                        Task { await store.setTimer(minutes, endAction: end) }
+                    // If heat isn't on yet, Apply starts the session WITH these settings, so
+                    // Start Heating can't overwrite them with the defaults.
+                    let willStart = minutes > 0 && !store.state.heater
+                    Button(willStart ? "Start" : "Apply") {
+                        Task {
+                            if willStart {
+                                await store.startTimed(minutes: minutes, endAction: end)
+                            } else {
+                                await store.setTimer(minutes, endAction: end)
+                            }
+                        }
                         dismiss()
                     }.fontWeight(.semibold)
                 }

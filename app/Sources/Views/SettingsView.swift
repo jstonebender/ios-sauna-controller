@@ -137,7 +137,12 @@ struct TimerDurationsView: View {
             }
 
             Section("Add a duration") {
-                Stepper("\(newValue) min", value: $newValue, in: 1...90, step: 5)
+                // 2, then 5, then by 5 (2, 5, 10, 15 … 90) — 2 min is handy for testing.
+                Stepper("\(newValue) min") {
+                    newValue = newValue < 5 ? 5 : min(90, newValue + 5)
+                } onDecrement: {
+                    newValue = newValue <= 5 ? 2 : newValue - 5
+                }
                 Button("Add") {
                     guard !settings.timerPresets.contains(newValue) else { return }
                     settings.timerPresets = (settings.timerPresets + [newValue]).sorted()
