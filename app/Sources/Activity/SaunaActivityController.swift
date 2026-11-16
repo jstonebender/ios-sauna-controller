@@ -88,8 +88,17 @@ final class SaunaActivityController {
             }
             if activity == nil {
                 guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-                activity = try? Activity.request(
-                    attributes: SaunaActivityAttributes(), content: content, pushType: .token)
+                do {
+                    activity = try Activity.request(
+                        attributes: SaunaActivityAttributes(), content: content, pushType: .token)
+                } catch {
+                    // A push-token activity needs the App ID's Push Notifications service
+                    // provisioned. If that isn't ready (e.g. a fresh paid App ID), still show a
+                    // LOCAL Live Activity so the Lock Screen / Dynamic Island work — we just
+                    // won't get remote temperature updates while the app is closed.
+                    activity = try? Activity.request(
+                        attributes: SaunaActivityAttributes(), content: content, pushType: nil)
+                }
                 observeToken()
             }
             await activity?.update(content)
