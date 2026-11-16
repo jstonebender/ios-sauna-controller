@@ -14,8 +14,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 import config
+import schedules
 from sauna import SaunaClient
 from sonos import SonosController
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("saunad")
@@ -44,6 +46,10 @@ _timer_end_action: Optional[dict] = None     # {"mode","color","waitMin"}
 _timer_end_armed = False                     # a commanded countdown is running, not yet ended
 _timer_end_deadline: Optional[float] = None  # wall-clock moment the timer should reach 0
 _power_off_at: Optional[float] = None        # wait-mode: when to cut power after the heat ends
+
+# Schedule firing: id -> the ISO date it last fired, so a schedule fires once per day even
+# though its start window spans several scheduler ticks.
+_sched_fired: dict[str, str] = {}
 
 STALE_AFTER_SEC = 120
 KEEPALIVE_SEC = 90  # re-push before the Live Activity goes stale, even if temp unchanged
@@ -119,7 +125,10 @@ async def lifespan(app: FastAPI):
                           bundle_id=acfg["bundleId"], sandbox=acfg.get("sandbox", True))
 
     await sauna.start()
-    tasks = [asyncio.create_task(_push_loop()), asyncio.create_task(_heater_watchdog())]
+    schedules.load()
+    tasks = [asyncio.create_task(_push_loop()),
+             asyncio.create_task(_heater_watchdog()),
+             asyncio.create_task(_scheduler_loop())]
     log.info("saunad started (sauna %s, APNs %s, auth %s, deadman %s)",
              s["ip"], "on" if apns else "off", "on" if _api_key else "OFF",
              f"{_heater_max_on_sec // 60}min" if _heater_max_on_sec else "off")
@@ -207,6 +216,24 @@ async def control(body: ControlBody):
     # the poll reconciles real device state.
     sauna.overlay_bools(power=body.power, heater=body.heater)
     return sauna.state()
+
+
+@app.get("/schedules")
+async def get_schedules():
+    """Return the schedules saunad will fire (the app reads these back after syncing)."""
+    return schedules.as_payload().model_dump()
+
+
+@app.post("/schedules", dependencies=[Depends(require_auth)])
+async def put_schedules(body: schedules.SchedulePayload):
+    """Replace saunad's schedules + heat rate (the app syncs its whole set on every edit)."""
+    schedules.save(body)
+    # Keep the "already fired today" record (so a sync during a fire window can't re-fire a
+    # schedule that just ran), but drop ids that no longer exist.
+    live = {s.id for s in body.schedules}
+    for sid in [k for k in _sched_fired if k not in live]:
+        del _sched_fired[sid]
+    return {"ok": True, "count": len(body.schedules)}
 
 
 @app.post("/audio", dependencies=[Depends(require_auth)])
@@ -481,3 +508,47 @@ async def _heater_watchdog():
             raise
         except Exception as e:
             log.warning("watchdog error: %s", e)
+
+
+async def _fire_schedule(s: "schedules.Schedule"):
+    """Apply a schedule's action: power on + heat (with its target/light/timer), or power off.
+    Order mirrors /control (power first — it resets the timer/lights)."""
+    log.info("schedule %s firing: %s", s.id, "ON" if s.turnOn else "OFF")
+    try:
+        if s.turnOn:
+            await sauna.start_heating()
+            if s.targetTempF is not None:
+                await sauna.set_target_temp(s.targetTempF)
+            if s.timerMin:
+                await sauna.set_timer(s.timerMin)
+                _arm_timer_end(s.timerMin, None)   # scheduled timer ends in a plain full-off
+            if s.chromoColor and s.chromoColor != "Off":
+                await sauna.set_light(s.chromoColor)
+        else:
+            await sauna.set_power(False)
+    except Exception as e:
+        log.warning("schedule %s fire failed: %s", s.id, e)
+
+
+async def _scheduler_loop():
+    """Every 30s, fire any schedule whose start moment has arrived. Fires each schedule at
+    most once per day (tracked in _sched_fired), riding out the multi-tick start window."""
+    while True:
+        try:
+            await asyncio.sleep(30)
+            now = datetime.now()
+            today = now.date().isoformat()
+            cur = sauna.state().get("currentTempF") if sauna else None
+            for s in schedules.current():
+                if _sched_fired.get(s.id) == today:
+                    continue
+                start = schedules.start_dt(s, now, cur)
+                if start is None:
+                    continue
+                if start <= now < start + timedelta(seconds=90):
+                    await _fire_schedule(s)
+                    _sched_fired[s.id] = today
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("scheduler error: %s", e)

@@ -4,6 +4,8 @@ import SwiftUI
 struct RootTabView: View {
     @Environment(SaunaStore.self) private var store
     @Environment(AppSettings.self) private var settings
+    @Environment(SchedulesStore.self) private var schedules
+    @Environment(HeatingModel.self) private var heating
     @Environment(\.modelContext) private var ctx
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var hSizeClass
@@ -25,16 +27,19 @@ struct RootTabView: View {
         }
         .onGeometryChange(for: Bool.self) { $0.size.width > $0.size.height } action: { isLandscape = $0 }
         .sheet(isPresented: $showSettings) { SettingsView() }
-        .task { SaunaActivityController.shared.configure(settings); store.startPolling() }
+        .task { SaunaActivityController.shared.configure(settings); store.startPolling(); syncSchedules() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 store.startPolling()
                 // Catch a timer that ended while the app was away — logs the backdated session.
                 SessionRunner.autoEndIfDue(store: store, ctx: ctx, settings: settings)
+                syncSchedules()   // keep saunad's copy current (it fires them)
             } else {
                 store.stopPolling()
             }
         }
+        // Push to saunad on every edit — it, not the phone, actually fires schedules.
+        .onChange(of: schedules.schedules) { _, _ in syncSchedules() }
         .onReceive(autoEndTick) { _ in
             SessionRunner.autoEndIfDue(store: store, ctx: ctx, settings: settings)
         }
@@ -94,5 +99,15 @@ struct RootTabView: View {
             }
             .tint(store.state.power ? Theme.ember : Theme.textSecondary)
         }
+    }
+
+    /// Push the current schedules + learned heat rate up to saunad, which fires them.
+    /// Best-effort: a failed sync just retries on the next edit / foreground / launch.
+    private func syncSchedules() {
+        guard let url = settings.url else { return }
+        let client = BridgeClient(base: url, apiKey: settings.apiKey)
+        let scheds = schedules.schedules
+        let rate = heating.ratePerMin
+        Task { try? await client.syncSchedules(scheds, heatRatePerMin: rate) }
     }
 }

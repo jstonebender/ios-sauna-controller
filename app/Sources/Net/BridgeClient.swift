@@ -49,6 +49,13 @@ struct BridgeClient: Sendable {
 
     func audioState() async throws -> AudioState { try await send("/audio/state", method: "GET") }
 
+    /// Push the whole schedule set (+ learned heat rate) to saunad, which fires them.
+    func syncSchedules(_ schedules: [SaunaSchedule], heatRatePerMin: Double) async throws {
+        let payload = SchedulesPayload(schedules: schedules.map(ScheduleWire.init),
+                                       heatRatePerMin: heatRatePerMin)
+        let _: EmptyResponse = try await send("/schedules", method: "POST", body: payload)
+    }
+
     func sessionStart() async throws {
         let _: EmptyResponse = try await send("/session/start", method: "POST", body: EmptyBody())
     }

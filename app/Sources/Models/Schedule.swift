@@ -70,6 +70,44 @@ struct SaunaSchedule: Identifiable, Codable, Equatable {
     }
 }
 
+/// Wire format sent to saunad (`POST /schedules`). Explicit so weekdays go as a sorted array
+/// and `onceDate` as plain epoch seconds — saunad fires schedules from these.
+struct ScheduleWire: Encodable {
+    let id: String
+    let enabled: Bool
+    let hour: Int
+    let minute: Int
+    let weekdays: [Int]
+    let onceDate: Double?
+    let turnOn: Bool
+    let readyBy: Bool
+    let autoPreheat: Bool
+    let preheatLeadMin: Int
+    let targetTempF: Int?
+    let chromoColor: String?
+    let timerMin: Int?
+
+    init(_ s: SaunaSchedule) {
+        id = s.id.uuidString
+        enabled = s.enabled
+        hour = s.hour; minute = s.minute
+        weekdays = s.weekdays.sorted()
+        onceDate = s.onceDate?.timeIntervalSince1970
+        turnOn = s.turnOn
+        readyBy = s.readyBy
+        autoPreheat = s.autoPreheat
+        preheatLeadMin = s.preheatLeadMin
+        targetTempF = s.targetTempF
+        chromoColor = s.chromoColor
+        timerMin = s.timerMin
+    }
+}
+
+struct SchedulesPayload: Encodable {
+    let schedules: [ScheduleWire]
+    let heatRatePerMin: Double
+}
+
 @MainActor
 @Observable
 final class SchedulesStore {

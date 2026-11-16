@@ -9,7 +9,12 @@ services:
     network_mode: host
     environment:
       - SAUNAD_OPTIONS=/data/options.json
+      - SAUNAD_STATE=/state
     volumes:
       - ./options.json:/data/options.json:ro
+      # Writable: schedules synced from the app persist here (survives rebuilds).
+      - ./state:/state
+      # Use the Pi's local timezone (schedules are in the user's local time, not UTC).
+      - /etc/localtime:/etc/localtime:ro
       # Uncomment once you add an APNs key for Live Activities:
       # - ./AuthKey.p8:/data/AuthKey.p8:ro
