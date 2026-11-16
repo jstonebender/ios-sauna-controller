@@ -189,8 +189,11 @@ async def control(body: ControlBody):
         if body.targetTempF is not None:
             st = await sauna.set_target_temp(body.targetTempF)
         if body.timerMin is not None:
-            st = await sauna.set_timer(body.timerMin)
+            # Arm the end-action on INTENT, BEFORE the (sometimes flaky) device write — so a
+            # Tuya write the FD-5 ignores can't lose it. saunad fires the end-action off its
+            # own deadline, so it holds even if the device never accepted the timer.
             _arm_timer_end(body.timerMin, body.timerEndAction)
+            st = await sauna.set_timer(body.timerMin)
         if body.heater is not None and not started:
             st = await sauna.set_heater(body.heater)
         if body.chromoColor is not None:
@@ -388,6 +391,10 @@ async def _apply_timer_end_action():
     _timer_end_armed = False
     _timer_end_deadline = None
     _heater_on_since = None
+    # Cancel the FD-5's own countdown first, so the device doesn't cut power out from under us
+    # during the light change / hold (it powers the sauna off when ITS timer reaches 0).
+    with contextlib.suppress(Exception):
+        await sauna.set_timer(0)
     # Heat always stops at timer end.
     with contextlib.suppress(Exception):
         await sauna.set_heater(False)
@@ -407,32 +414,41 @@ async def _apply_timer_end_action():
 
 
 async def _heater_watchdog():
-    """Runs every 15s and handles timer-end plus two safety nets:
-    - timer end-action: once an armed countdown reaches 0 (device reports 0 remaining,
-      the heater drops at expiry, or the armed wall-clock deadline passes), apply the
-      configured end-action — requiring two consecutive ticks to ride out device lag
-      right after a timer is (re)set.
+    """Runs every 5s and handles timer-end plus two safety nets:
+    - timer end-action: fires a few seconds BEFORE the armed deadline — taking over from the
+      FD-5's own timer (which cuts power when IT reaches 0) — then runs the configured
+      sequence. Driven off saunad's own deadline, so a flaky device-timer write can't lose it.
     - un-armed expiry safety: if no end-action is managing it, a heater still on with 0
-      remaining is force-stopped (belt-and-braces; the Eclipse 2's own timer didn't).
+      remaining is force-stopped (belt-and-braces; the FD-5's own timer didn't).
     - deadman: heater on longer than server.heaterMaxOnMinutes (if configured)."""
     global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at
-    expired_ticks = 0
+    FIRE_LEAD = 20   # fire this many seconds before the deadline, to beat the device power-cut
+    stuck_ticks = 0
     while True:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(5)
             st = sauna.state()
             now = time.time()
             heater = st.get("heater")
             power = st.get("power")
             rem = st.get("timerRemainingMin")
 
-            # Manual power-off cancels any armed timer / pending wait-mode power-off.
+            # Armed countdown due? Drive off OUR deadline (immune to device-timer flakiness),
+            # firing a little early so power is still on for the light change + hold. This runs
+            # even if power already dropped, so a timer-end power-cut can't pre-empt the action.
+            if (_timer_end_armed and _timer_end_deadline is not None
+                    and now >= _timer_end_deadline - FIRE_LEAD):
+                await _apply_timer_end_action()
+                stuck_ticks = 0
+                continue
+
+            # Power off BEFORE the deadline = a real early/manual stop → drop everything.
             if not power:
                 _timer_end_armed = False
                 _timer_end_deadline = None
                 _power_off_at = None
                 _heater_on_since = None
-                expired_ticks = 0
+                stuck_ticks = 0
                 continue
 
             # wait-mode: cut power once the hold elapses.
@@ -442,24 +458,15 @@ async def _heater_watchdog():
                     await sauna.set_power(False)
                 log.info("timer end: wait elapsed — powered off")
 
-            # Has the armed countdown reached 0? Device reports 0, or the heater has
-            # dropped with ~0 left, or the armed deadline has passed (robust fallback).
-            ended = (rem == 0
-                     or (heater is False and isinstance(rem, int) and rem <= 1)
-                     or (_timer_end_deadline is not None and now >= _timer_end_deadline))
-            if _timer_end_armed and ended:
-                expired_ticks += 1
-                if expired_ticks >= 2:
-                    await _apply_timer_end_action()
-                    expired_ticks = 0
-            elif not _timer_end_armed and heater and rem == 0:
-                # No end-action managing it, but the heater is stuck on at 0 — force stop.
-                expired_ticks += 1
-                if expired_ticks >= 2:
+            # un-armed safety: a heater stuck on at 0 that saunad isn't managing (e.g. a
+            # panel-set timer) — force stop after two ticks to ride out a transient 0.
+            if not _timer_end_armed and heater and rem == 0:
+                stuck_ticks += 1
+                if stuck_ticks >= 2:
                     await _stop_sauna("timer reached 0 with the heater still on")
-                    expired_ticks = 0
+                    stuck_ticks = 0
             else:
-                expired_ticks = 0
+                stuck_ticks = 0
 
             # deadman: heater on too long.
             if not heater:
