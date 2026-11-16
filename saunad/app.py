@@ -46,6 +46,17 @@ _timer_end_action: Optional[dict] = None     # {"mode","color","waitMin"}
 _timer_end_armed = False                     # a commanded countdown is running, not yet ended
 _timer_end_deadline: Optional[float] = None  # wall-clock moment the timer should reach 0
 _power_off_at: Optional[float] = None        # wait-mode: when to cut power after the heat ends
+_timer_pending_min: Optional[int] = None     # timer set below target: counts only once at temp
+
+
+def _at_temp(cur: Optional[int], tgt: Optional[int]) -> bool:
+    """Has the cabin reached target (within the app's ~2°F 'ready' margin)? No target to wait
+    for → treat as at-temp; unknown temp → not yet (wait for a reading)."""
+    if tgt is None:
+        return True
+    if cur is None:
+        return False
+    return cur >= tgt - 2
 
 # Schedule firing: id -> the ISO date it last fired, so a schedule fires once per day even
 # though its start window spans several scheduler ticks.
@@ -163,6 +174,9 @@ async def get_state():
         st["session"] = {"active": True, "startedAt": _session["start"],
                          "elapsedSec": int(time.time() - _session["start"])}
     st["timerEndAction"] = _timer_end_action if _timer_end_armed else None
+    if _timer_pending_min is not None:
+        st["timerSetMin"] = _timer_pending_min   # show the configured duration during preheat
+        st["timerPending"] = True                # set, but not counting until at temp
     return st
 
 
@@ -202,7 +216,10 @@ async def control(body: ControlBody):
             # Tuya write the FD-5 ignores can't lose it. saunad fires the end-action off its
             # own deadline, so it holds even if the device never accepted the timer.
             _arm_timer_end(body.timerMin, body.timerEndAction)
-            st = await sauna.set_timer(body.timerMin)
+            # Program the FD-5's own timer only when it's counting now; a pending (temp-gated)
+            # timer gets set on the device once the watchdog sees target reached.
+            if body.timerMin == 0 or _timer_pending_min is None:
+                st = await sauna.set_timer(body.timerMin)
         if body.heater is not None and not started:
             st = await sauna.set_heater(body.heater)
         if body.chromoColor is not None:
@@ -392,18 +409,30 @@ async def _stop_sauna(reason: str):
 def _arm_timer_end(timer_min: Optional[int], ea: Optional[EndActionBody]):
     """Record what to do when the just-set timer runs out. A timer > 0 arms the end-action
     (defaulting to a plain full-off); timer 0 / off clears it."""
-    global _timer_end_action, _timer_end_armed, _timer_end_deadline, _power_off_at
+    global _timer_end_action, _timer_end_armed, _timer_end_deadline, _power_off_at, _timer_pending_min
     if timer_min and timer_min > 0:
         _timer_end_action = ea.model_dump() if ea else {"changeLight": False, "color": "Blue", "powerOffDelayMin": 0}
         _timer_end_armed = True
-        _timer_end_deadline = time.time() + timer_min * 60
         _power_off_at = None   # a fresh timer cancels any pending deferred power-off
-        log.info("timer armed: %s min, end-action %s", timer_min, _timer_end_action)
+        st = sauna.state() if sauna else {}
+        if _at_temp(st.get("currentTempF"), st.get("targetTempF")):
+            # Already hot — count down now.
+            _timer_end_deadline = time.time() + timer_min * 60
+            _timer_pending_min = None
+            log.info("timer armed: %s min, end-action %s (counting — at temp)", timer_min, _timer_end_action)
+        else:
+            # Below target — hold the timer until the cabin reaches temp, so a 30-min timer
+            # means 30 min AT temperature, not 30 min that burns down during preheat.
+            _timer_end_deadline = None
+            _timer_pending_min = timer_min
+            log.info("timer armed: %s min, end-action %s (pending — waits to reach %s°F)",
+                     timer_min, _timer_end_action, st.get("targetTempF"))
     else:
         _timer_end_action = None
         _timer_end_armed = False
         _timer_end_deadline = None
         _power_off_at = None
+        _timer_pending_min = None
 
 
 async def _apply_timer_end_action():
@@ -448,7 +477,7 @@ async def _heater_watchdog():
     - un-armed expiry safety: if no end-action is managing it, a heater still on with 0
       remaining is force-stopped (belt-and-braces; the FD-5's own timer didn't).
     - deadman: heater on longer than server.heaterMaxOnMinutes (if configured)."""
-    global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at
+    global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at, _timer_pending_min
     FIRE_LEAD = 20   # fire this many seconds before the deadline, to beat the device power-cut
     stuck_ticks = 0
     while True:
@@ -459,6 +488,8 @@ async def _heater_watchdog():
             heater = st.get("heater")
             power = st.get("power")
             rem = st.get("timerRemainingMin")
+            cur = st.get("currentTempF")
+            tgt = st.get("targetTempF")
 
             # Armed countdown due? Drive off OUR deadline (immune to device-timer flakiness),
             # firing a little early so power is still on for the light change + hold. This runs
@@ -474,9 +505,21 @@ async def _heater_watchdog():
                 _timer_end_armed = False
                 _timer_end_deadline = None
                 _power_off_at = None
+                _timer_pending_min = None
                 _heater_on_since = None
                 stuck_ticks = 0
                 continue
+
+            # Temp-gated timer: once the cabin reaches target, start the full duration counting
+            # (and program the FD-5's own display) — so the session is measured FROM temperature,
+            # not burned down during preheat.
+            if _timer_end_armed and _timer_pending_min is not None and _at_temp(cur, tgt):
+                mins = _timer_pending_min
+                _timer_pending_min = None
+                _timer_end_deadline = now + mins * 60
+                with contextlib.suppress(Exception):
+                    await sauna.set_timer(mins)
+                log.info("timer started: %s min at temp (reached %s°F, target %s°F)", mins, cur, tgt)
 
             # wait-mode: cut power once the hold elapses.
             if _power_off_at is not None and now >= _power_off_at:
@@ -495,8 +538,10 @@ async def _heater_watchdog():
             else:
                 stuck_ticks = 0
 
-            # deadman: heater on too long.
-            if not heater:
+            # deadman: heater on too long with nothing managing shutoff. A timer that's COUNTING
+            # (deadline set) owns shutoff, so defer to it — preheat + a full at-temp session must
+            # not trip the deadman. Preheat itself (pending, no deadline) is still capped.
+            if not heater or (_timer_end_armed and _timer_end_deadline is not None):
                 _heater_on_since = None
             elif _heater_max_on_sec is not None:
                 if _heater_on_since is None:
@@ -520,8 +565,11 @@ async def _fire_schedule(s: "schedules.Schedule"):
             if s.targetTempF is not None:
                 await sauna.set_target_temp(s.targetTempF)
             if s.timerMin:
-                await sauna.set_timer(s.timerMin)
+                # Temp-gated: at a scheduled start the cabin is cold, so this holds pending and
+                # counts only once at target — the session isn't eaten by preheat.
                 _arm_timer_end(s.timerMin, None)   # scheduled timer ends in a plain full-off
+                if _timer_pending_min is None:
+                    await sauna.set_timer(s.timerMin)
             if s.chromoColor and s.chromoColor != "Off":
                 await sauna.set_light(s.chromoColor)
         else:
