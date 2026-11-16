@@ -293,28 +293,168 @@ private struct TargetCard: View {
 
 private struct TimerCard: View {
     @Environment(SaunaStore.self) private var store
-    @Environment(AppSettings.self) private var settings
     let state: SaunaState
+    @State private var showSetup = false
 
     private var valueText: String { state.timerSetMin.map { "\($0) min" } ?? "Off" }
+    /// The end-action hint, shown only when a timer is set and it isn't a plain "Off".
+    private var endText: String? {
+        guard state.timerSetMin != nil, !store.timerEndAction.isDefault else { return nil }
+        return store.timerEndAction.summary
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Timer", systemImage: "timer").foregroundStyle(Theme.textSecondary)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
-            Menu {
-                Button("Off") { Task { await store.setTimer(0) } }
-                ForEach(settings.timerPresets, id: \.self) { m in
-                    Button("\(m) min") { Task { await store.setTimer(m) } }
-                }
-            } label: {
-                DropdownPill(text: valueText)
+            Button { showSetup = true } label: { DropdownPill(text: valueText) }
+                .buttonStyle(.plain)
+                .disabled(!state.power)   // device resets the timer on power-on; set it after turning on
+            if let endText {
+                Label("then \(endText)", systemImage: "arrow.turn.down.right")
+                    .font(.system(.caption2, design: .rounded, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
-            .disabled(!state.power)   // device resets the timer on power-on; set it after turning on
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .opacity(state.power ? 1 : 0.6)
         .glassCard(14)
+        .sheet(isPresented: $showSetup) { TimerSetupSheet(state: state) }
+    }
+}
+
+/// Full timer setup: duration + what happens when the heat timer runs out.
+private struct TimerSetupSheet: View {
+    @Environment(SaunaStore.self) private var store
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.dismiss) private var dismiss
+    let state: SaunaState
+
+    @State private var minutes: Int
+    @State private var end = TimerEndAction.default
+
+    init(state: SaunaState) {
+        self.state = state
+        _minutes = State(initialValue: state.timerSetMin ?? 0)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    durationSection
+                    endActionSection
+                }
+                .padding(18)
+            }
+            .scrollIndicators(.hidden)
+            .background(Theme.bg0)
+            .navigationTitle("Timer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        Task { await store.setTimer(minutes, endAction: end) }
+                        dismiss()
+                    }.fontWeight(.semibold)
+                }
+            }
+        }
+        .onAppear { end = store.timerEndAction }
+        .presentationDetents([.medium, .large])
+        .presentationBackground(Theme.bg0)
+    }
+
+    // MARK: duration
+
+    private var durationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Duration")
+            let cols = [GridItem(.adaptive(minimum: 72), spacing: 10)]
+            LazyVGrid(columns: cols, spacing: 10) {
+                durationChip(0, label: "Off")
+                ForEach(settings.timerPresets, id: \.self) { m in
+                    durationChip(m, label: "\(m)m")
+                }
+            }
+        }
+    }
+
+    private func durationChip(_ m: Int, label: String) -> some View {
+        let selected = minutes == m
+        return Button { minutes = m } label: {
+            Text(label)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .frame(maxWidth: .infinity).frame(height: 44)
+                .foregroundStyle(selected ? Theme.bg0 : Theme.textPrimary)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? AnyShapeStyle(Theme.emberGradient) : AnyShapeStyle(Color.white.opacity(0.06))))
+        }.buttonStyle(.plain)
+    }
+
+    // MARK: end action
+
+    private var endActionSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionTitle("When timer ends")
+            caption("Heat stops. Optionally switch the light, keep power on for a delay, then power off.")
+
+            Toggle(isOn: $end.changeLight) {
+                Text("Change light")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .tint(Theme.ember)
+            if end.changeLight { colorRow }
+
+            Stepper(value: $end.powerOffDelayMin, in: 0...60) {
+                HStack {
+                    Text("Power off")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 8)
+                    Text(end.powerOffDelayMin > 0 ? "after \(end.powerOffDelayMin) min" : "immediately")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(Theme.amber)
+                }
+            }
+        }
+        .opacity(minutes > 0 ? 1 : 0.4)
+        .disabled(minutes == 0)
+    }
+
+    private var colorRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(ChromaPalette.solids, id: \.value) { c in
+                    let selected = end.color == c.value
+                    Button { end.color = c.value } label: {
+                        Circle().fill(c.color).frame(width: 34, height: 34)
+                            .overlay(Circle().strokeBorder(
+                                selected ? Theme.ember : .white.opacity(0.25),
+                                lineWidth: selected ? 3 : 1))
+                    }.buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    // MARK: bits
+
+    private func sectionTitle(_ t: String) -> some View {
+        Text(t).font(.system(.footnote, design: .rounded, weight: .semibold))
+            .foregroundStyle(Theme.textSecondary)
+            .textCase(.uppercase)
+    }
+    private func caption(_ t: String) -> some View {
+        Text(t).font(.system(.caption, design: .rounded))
+            .foregroundStyle(Theme.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

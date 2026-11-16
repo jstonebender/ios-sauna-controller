@@ -38,17 +38,33 @@ _last_push_at = 0.0
 _heater_on_since: Optional[float] = None
 _alerted_interruption: Optional[float] = None
 
+# Timer end-action: what to do when the running heat timer reaches 0. Armed when the
+# app sets a timer; applied by the watchdog at timer-0; cleared on power-off / timer-off.
+_timer_end_action: Optional[dict] = None     # {"mode","color","waitMin"}
+_timer_end_armed = False                     # a commanded countdown is running, not yet ended
+_timer_end_deadline: Optional[float] = None  # wall-clock moment the timer should reach 0
+_power_off_at: Optional[float] = None        # wait-mode: when to cut power after the heat ends
+
 STALE_AFTER_SEC = 120
 KEEPALIVE_SEC = 90  # re-push before the Live Activity goes stale, even if temp unchanged
 
 
 # ---------- request models ----------
+class EndActionBody(BaseModel):
+    """What saunad does when the heat timer reaches 0, as one sequence: cut the heater,
+    optionally change the light, hold power for a delay, then power off."""
+    changeLight: bool = False                        # switch the light at timer end?
+    color: str = "Blue"                              # FD-5 light, used when changeLight
+    powerOffDelayMin: int = Field(0, ge=0, le=90)    # minutes to stay powered, then off (0 = now)
+
+
 class ControlBody(BaseModel):
     power: Optional[bool] = None
     heater: Optional[bool] = None
     targetTempF: Optional[int] = Field(None, ge=86, le=170)   # FD-5 setpoint range
     timerMin: Optional[int] = Field(None, ge=0, le=90)
     chromoColor: Optional[str] = None   # FD-5 light: White, Red, …, Scroll, Off
+    timerEndAction: Optional[EndActionBody] = None   # applied when the timer above runs out
 
 
 class AudioBody(BaseModel):
@@ -137,6 +153,7 @@ async def get_state():
     if _session:
         st["session"] = {"active": True, "startedAt": _session["start"],
                          "elapsedSec": int(time.time() - _session["start"])}
+    st["timerEndAction"] = _timer_end_action if _timer_end_armed else None
     return st
 
 
@@ -173,6 +190,7 @@ async def control(body: ControlBody):
             st = await sauna.set_target_temp(body.targetTempF)
         if body.timerMin is not None:
             st = await sauna.set_timer(body.timerMin)
+            _arm_timer_end(body.timerMin, body.timerEndAction)
         if body.heater is not None and not started:
             st = await sauna.set_heater(body.heater)
         if body.chromoColor is not None:
@@ -341,40 +359,117 @@ async def _stop_sauna(reason: str):
         await sauna.set_power(False)
 
 
+def _arm_timer_end(timer_min: Optional[int], ea: Optional[EndActionBody]):
+    """Record what to do when the just-set timer runs out. A timer > 0 arms the end-action
+    (defaulting to a plain full-off); timer 0 / off clears it."""
+    global _timer_end_action, _timer_end_armed, _timer_end_deadline, _power_off_at
+    if timer_min and timer_min > 0:
+        _timer_end_action = ea.model_dump() if ea else {"changeLight": False, "color": "Blue", "powerOffDelayMin": 0}
+        _timer_end_armed = True
+        _timer_end_deadline = time.time() + timer_min * 60
+        _power_off_at = None   # a fresh timer cancels any pending deferred power-off
+        log.info("timer armed: %s min, end-action %s", timer_min, _timer_end_action)
+    else:
+        _timer_end_action = None
+        _timer_end_armed = False
+        _timer_end_deadline = None
+        _power_off_at = None
+
+
+async def _apply_timer_end_action():
+    """Run the armed end-action now that the heat timer has reached 0, as one sequence:
+    cut the heater (always — safety invariant), optionally change the light, then either
+    hold power for a delay (lights stay on) or power off immediately."""
+    global _timer_end_armed, _timer_end_deadline, _power_off_at, _heater_on_since
+    ea = _timer_end_action or {}
+    change_light = bool(ea.get("changeLight"))
+    color = ea.get("color", "Blue")
+    delay_min = int(ea.get("powerOffDelayMin", 0) or 0)
+    _timer_end_armed = False
+    _timer_end_deadline = None
+    _heater_on_since = None
+    # Heat always stops at timer end.
+    with contextlib.suppress(Exception):
+        await sauna.set_heater(False)
+    # Optionally switch the light (power is still on, so the FD-5 accepts it).
+    if change_light:
+        with contextlib.suppress(Exception):
+            await sauna.set_light(color)
+        log.info("timer end: light -> %s", color)
+    # Hold power for the delay (lights stay on), or power off now.
+    if delay_min > 0:
+        _power_off_at = time.time() + delay_min * 60
+        log.info("timer end: holding power %s min, then off", delay_min)
+    else:
+        with contextlib.suppress(Exception):
+            await sauna.set_power(False)
+        log.info("timer end: power off")
+
+
 async def _heater_watchdog():
-    """Two safety checks every 30s:
-    - timer expiry: belt-and-braces in case the device's own timer reaching 0 doesn't
-      shut the heater off (it didn't on the Eclipse 2) — after two consecutive ticks
-      (60s) of heater-on with 0 minutes remaining, to ride out the device's lag right
-      after a timer is (re)set.
+    """Runs every 15s and handles timer-end plus two safety nets:
+    - timer end-action: once an armed countdown reaches 0 (device reports 0 remaining,
+      the heater drops at expiry, or the armed wall-clock deadline passes), apply the
+      configured end-action — requiring two consecutive ticks to ride out device lag
+      right after a timer is (re)set.
+    - un-armed expiry safety: if no end-action is managing it, a heater still on with 0
+      remaining is force-stopped (belt-and-braces; the Eclipse 2's own timer didn't).
     - deadman: heater on longer than server.heaterMaxOnMinutes (if configured)."""
-    global _heater_on_since
+    global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at
     expired_ticks = 0
     while True:
         try:
-            await asyncio.sleep(30)
+            await asyncio.sleep(15)
             st = sauna.state()
-            on = st.get("heater")
-            if not on:
+            now = time.time()
+            heater = st.get("heater")
+            power = st.get("power")
+            rem = st.get("timerRemainingMin")
+
+            # Manual power-off cancels any armed timer / pending wait-mode power-off.
+            if not power:
+                _timer_end_armed = False
+                _timer_end_deadline = None
+                _power_off_at = None
                 _heater_on_since = None
                 expired_ticks = 0
                 continue
-            if st.get("timerRemainingMin") == 0:
+
+            # wait-mode: cut power once the hold elapses.
+            if _power_off_at is not None and now >= _power_off_at:
+                _power_off_at = None
+                with contextlib.suppress(Exception):
+                    await sauna.set_power(False)
+                log.info("timer end: wait elapsed — powered off")
+
+            # Has the armed countdown reached 0? Device reports 0, or the heater has
+            # dropped with ~0 left, or the armed deadline has passed (robust fallback).
+            ended = (rem == 0
+                     or (heater is False and isinstance(rem, int) and rem <= 1)
+                     or (_timer_end_deadline is not None and now >= _timer_end_deadline))
+            if _timer_end_armed and ended:
+                expired_ticks += 1
+                if expired_ticks >= 2:
+                    await _apply_timer_end_action()
+                    expired_ticks = 0
+            elif not _timer_end_armed and heater and rem == 0:
+                # No end-action managing it, but the heater is stuck on at 0 — force stop.
                 expired_ticks += 1
                 if expired_ticks >= 2:
                     await _stop_sauna("timer reached 0 with the heater still on")
                     expired_ticks = 0
-                    _heater_on_since = None
-                    continue
             else:
                 expired_ticks = 0
-            if _heater_max_on_sec is None:
-                continue
-            if _heater_on_since is None:
-                _heater_on_since = time.time()
-            elif time.time() - _heater_on_since >= _heater_max_on_sec:
-                await _stop_sauna(f"heater on > {_heater_max_on_sec}s (deadman)")
+
+            # deadman: heater on too long.
+            if not heater:
                 _heater_on_since = None
+            elif _heater_max_on_sec is not None:
+                if _heater_on_since is None:
+                    _heater_on_since = now
+                elif now - _heater_on_since >= _heater_max_on_sec:
+                    await _stop_sauna(f"heater on > {_heater_max_on_sec}s (deadman)")
+                    _heater_on_since = None
         except asyncio.CancelledError:
             raise
         except Exception as e:

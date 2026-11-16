@@ -30,6 +30,20 @@ final class AppSettings {
     var defaultLightColor: String {
         didSet { UserDefaults.standard.set(defaultLightColor, forKey: Self.kDefLight) }
     }
+    /// What happens when the heat timer runs out, applied to timers set via Start Heating
+    /// / Get In and pre-filled in the timer setup sheet. Stored as JSON.
+    var defaultTimerEndAction: TimerEndAction {
+        didSet {
+            if let data = try? JSONEncoder().encode(defaultTimerEndAction) {
+                UserDefaults.standard.set(data, forKey: Self.kDefEndAction)
+            }
+        }
+    }
+    /// Automatically "Get Out" (close the session + log to Health) when the heat timer
+    /// ends, so a forgotten step-out never logs a multi-hour session. On by default.
+    var autoEndSessionAtTimerEnd: Bool {
+        didSet { UserDefaults.standard.set(autoEndSessionAtTimerEnd, forKey: Self.kAutoEnd) }
+    }
 
     static let defaultPresets = [25, 60, 75, 90]
 
@@ -39,6 +53,8 @@ final class AppSettings {
     private static let kDefTarget = "saunad.defaultTargetF"
     private static let kDefTimer = "saunad.defaultTimerMin"
     private static let kDefLight = "saunad.defaultLightColor"
+    private static let kDefEndAction = "saunad.defaultTimerEndAction"
+    private static let kAutoEnd = "saunad.autoEndSessionAtTimerEnd"
 
     init() {
         baseURL = UserDefaults.standard.string(forKey: Self.kURL) ?? Self.buildDefault("SaunadDefaultURL")
@@ -47,6 +63,13 @@ final class AppSettings {
         defaultTargetF = (UserDefaults.standard.object(forKey: Self.kDefTarget) as? Int) ?? 150
         defaultTimerMin = (UserDefaults.standard.object(forKey: Self.kDefTimer) as? Int) ?? 60
         defaultLightColor = UserDefaults.standard.string(forKey: Self.kDefLight) ?? "White"
+        if let data = UserDefaults.standard.data(forKey: Self.kDefEndAction),
+           let decoded = try? JSONDecoder().decode(TimerEndAction.self, from: data) {
+            defaultTimerEndAction = decoded
+        } else {
+            defaultTimerEndAction = .default
+        }
+        autoEndSessionAtTimerEnd = (UserDefaults.standard.object(forKey: Self.kAutoEnd) as? Bool) ?? true
     }
 
     /// Default injected at build time from the gitignored Local.xcconfig (via Info.plist).

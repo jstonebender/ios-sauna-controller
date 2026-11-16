@@ -36,6 +36,9 @@ app/*.entitlements
 !app/SaunaController.entitlements
 # Personal build defaults (saunad URL + API key) — see Local.example.xcconfig
 app/Local.xcconfig
+# Stray build/runtime logs
+app/build.log
+app/runtime_dl.log
 
 # ── Local tooling / machine-specific (never commit) ──
 # Local agent/editor settings — may hold machine-specific paths or secrets.

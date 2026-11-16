@@ -7,6 +7,9 @@ import SwiftUI
 @MainActor
 enum SessionRunner {
     static let key = "activeSessionStart"
+    /// Epoch when the running heat timer is expected to end — the auto step-out deadline.
+    /// Kept in sync by SaunaStore whenever a timer is applied during a session.
+    static let autoEndKey = "activeSessionAutoEndAt"
     static var activeStart: Double { UserDefaults.standard.double(forKey: key) }
     static var inSession: Bool { activeStart > 0 }
 
@@ -16,16 +19,19 @@ enum SessionRunner {
         UserDefaults.standard.set(now.timeIntervalSince1970, forKey: key)
         Task {
             await store.beginSession()
-            await store.getInScene()   // interior lights on · chroma red · 25-min timer
+            await store.getInScene()   // interior lights on · chroma red · default timer (also arms auto step-out)
             await SaunaActivityController.shared.beginSession(now, state: store.state)
         }
     }
 
-    static func getOut(store: SaunaStore, ctx: ModelContext) {
-        Haptics.success()
+    /// End the session: record it, log to Health, end the Live Activity. A manual Get Out
+    /// also turns the sauna fully off; the automatic timer-end step-out (`stopSauna: false`)
+    /// leaves power/light to the timer end-action, and backdates `end` to the timer-end time.
+    static func getOut(store: SaunaStore, ctx: ModelContext, end: Date = Date(), stopSauna: Bool = true) {
+        if stopSauna { Haptics.success() }
         let start = Date(timeIntervalSince1970: activeStart)
-        let end = Date()
         UserDefaults.standard.set(0.0, forKey: key)
+        UserDefaults.standard.set(0.0, forKey: autoEndKey)
         Task {
             let result = await store.endSession()   // record the peak before the heat goes off
             let session = SaunaSession(start: start, end: end,
@@ -33,10 +39,20 @@ enum SessionRunner {
                                        targetTempF: store.state.targetTempF)
             ctx.insert(session)
             try? ctx.save()
-            await store.stop()   // Get Out = done: power + heater off
+            if stopSauna { await store.stop() }   // manual Get Out = done: power + heater off
             await HealthKitManager.shared.log(start: start, end: end, peakTempF: session.peakTempF)
             await SaunaActivityController.shared.endSession(state: store.state)
         }
+    }
+
+    /// Close the session automatically once the heat timer has ended, backdating the end to
+    /// the timer-end moment — so a forgotten step-out, or a phone left outside, never logs a
+    /// multi-hour session. Power/light are left to the timer end-action. Safe to call often.
+    static func autoEndIfDue(store: SaunaStore, ctx: ModelContext, settings: AppSettings) {
+        guard settings.autoEndSessionAtTimerEnd, inSession else { return }
+        let due = UserDefaults.standard.double(forKey: autoEndKey)
+        guard due > 0, Date().timeIntervalSince1970 >= due else { return }
+        getOut(store: store, ctx: ctx, end: Date(timeIntervalSince1970: due), stopSauna: false)
     }
 }
 

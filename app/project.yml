@@ -58,6 +58,7 @@ targets:
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        UIRequiresFullScreen: true   # iPhone-only portrait app; silences the "all orientations" warning
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIUserInterfaceStyle: Dark
         NSSupportsLiveActivities: true

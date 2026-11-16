@@ -48,8 +48,24 @@ struct SettingsView: View {
                     Picker("Light", selection: $settings.defaultLightColor) {
                         ForEach(ChromaPalette.solids, id: \.value) { c in Text(c.name).tag(c.value) }
                     }
+                    Toggle("Change light when timer ends", isOn: $settings.defaultTimerEndAction.changeLight)
+                    if settings.defaultTimerEndAction.changeLight {
+                        Picker("End light", selection: $settings.defaultTimerEndAction.color) {
+                            ForEach(ChromaPalette.solids, id: \.value) { c in Text(c.name).tag(c.value) }
+                        }
+                    }
+                    Stepper(settings.defaultTimerEndAction.powerOffDelayMin > 0
+                            ? "Power off after \(settings.defaultTimerEndAction.powerOffDelayMin) min"
+                            : "Power off immediately",
+                            value: $settings.defaultTimerEndAction.powerOffDelayMin, in: 0...60)
                 } header: { Text("Default when starting") } footer: {
-                    Text("Target is applied when you Start Heating; timer and light also on Get In.")
+                    Text("Target applies on Start Heating; timer, light and the timer-end action also on Get In. At timer end the heat stops; the light optionally changes, power stays on for the delay (lights on, so you’re not left in the dark), then it powers off.")
+                }
+
+                Section {
+                    Toggle("Auto step-out at timer end", isOn: $settings.autoEndSessionAtTimerEnd)
+                } header: { Text("Session") } footer: {
+                    Text("When the heat timer ends, automatically close the session and log it to Health — so a forgotten Get Out never records a multi-hour session. Power and lights follow your timer end-action.")
                 }
 
                 Section {

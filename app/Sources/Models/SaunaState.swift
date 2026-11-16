@@ -92,6 +92,9 @@ struct ControlRequest: Encodable {
     var targetTempF: Int? = nil
     var timerMin: Int? = nil
     var chromoColor: String? = nil
+    /// What saunad does when the heat timer reaches 0. Sent with the timer; saunad holds
+    /// it until the timer fires, is cleared, or power goes off.
+    var timerEndAction: TimerEndAction? = nil
 }
 
 struct SessionResult: Decodable, Sendable {

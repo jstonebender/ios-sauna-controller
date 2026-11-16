@@ -18,6 +18,9 @@ final class SaunaStore {
     private(set) var busy = false
     /// Self-ticking countdown anchor for the heat timer (nil = no timer running).
     private(set) var timerDeadline: Date?
+    /// What saunad will do when the running heat timer reaches 0 (shown on the Timer card).
+    /// Seeded from the user's default; updated when a timer is set with an end-action.
+    private(set) var timerEndAction = TimerEndAction.default
 
     private var pollTask: Task<Void, Never>?
     private var controlEpoch = 0   // bumped by every control; a poll started before a control is discarded
@@ -33,6 +36,7 @@ final class SaunaStore {
     init(settings: AppSettings, heating: HeatingModel) {
         self.settings = settings
         self.heating = heating
+        self.timerEndAction = settings.defaultTimerEndAction
     }
 
     private var client: BridgeClient? {
@@ -168,10 +172,12 @@ final class SaunaStore {
         let tgt = settings.defaultTargetF
         let t = settings.defaultTimerMin
         let c = settings.defaultLightColor
+        timerEndAction = settings.defaultTimerEndAction
         await control(.init(power: true, heater: true,
                             targetTempF: tgt,
                             timerMin: t > 0 ? t : nil,
-                            chromoColor: c == "Off" ? nil : c)) {
+                            chromoColor: c == "Off" ? nil : c,
+                            timerEndAction: t > 0 ? settings.defaultTimerEndAction : nil)) {
             $0.power = true; $0.heater = true; $0.targetTempF = tgt
             if t > 0 { $0.timerSetMin = t; $0.timerRemainingMin = t }
             $0.chromoColor = (c == "Off") ? "White" : c
@@ -191,10 +197,25 @@ final class SaunaStore {
     }
     func setHeater(_ on: Bool) async { Haptics.toggle(); await control(.init(heater: on)) { $0.heater = on } }
     func setTarget(_ f: Int) async { await control(.init(targetTempF: f), quiet: true) { $0.targetTempF = f } }
-    func setTimer(_ m: Int) async {
+    func setTimer(_ m: Int, endAction: TimerEndAction? = nil) async {
         Haptics.tap()
+        if let endAction { timerEndAction = endAction }
         if m > 0, state.heater { timerDeadline = Date().addingTimeInterval(TimeInterval(m) * 60) }  // optimistic countdown
-        await control(.init(timerMin: m)) { $0.timerSetMin = m; $0.timerRemainingMin = m }
+        noteSessionTimer(m)
+        // An end-action only rides along with a running timer; m == 0 clears it on saunad.
+        let ea = m > 0 ? timerEndAction : nil
+        await control(.init(timerMin: m, timerEndAction: ea)) { $0.timerSetMin = m; $0.timerRemainingMin = m }
+    }
+
+    /// Keep the session auto step-out deadline in step with the running heat timer. Writes the
+    /// expected timer-end epoch while a session is active (so a forgotten step-out is backdated
+    /// to the timer end); clears it when the timer is turned off. No-op outside a session or
+    /// when auto-end is disabled. See SessionRunner.autoEndIfDue.
+    private func noteSessionTimer(_ minutes: Int) {
+        guard settings.autoEndSessionAtTimerEnd,
+              UserDefaults.standard.double(forKey: SessionRunner.key) > 0 else { return }
+        let due = minutes > 0 ? Date().timeIntervalSince1970 + Double(minutes) * 60 : 0
+        UserDefaults.standard.set(due, forKey: SessionRunner.autoEndKey)
     }
     func setChromo(_ v: String) async { Haptics.tap(); await control(.init(chromoColor: v)) { $0.chromoColor = v } }
 
@@ -225,7 +246,10 @@ final class SaunaStore {
     func getInScene() async {
         let t = settings.defaultTimerMin
         let c = settings.defaultLightColor
-        await control(.init(timerMin: t > 0 ? t : nil, chromoColor: c == "Off" ? nil : c)) {
+        timerEndAction = settings.defaultTimerEndAction
+        noteSessionTimer(t)   // Get In starts a session — arm the auto step-out to the timer
+        await control(.init(timerMin: t > 0 ? t : nil, chromoColor: c == "Off" ? nil : c,
+                            timerEndAction: t > 0 ? settings.defaultTimerEndAction : nil)) {
             if t > 0 { $0.timerSetMin = t; $0.timerRemainingMin = t }
             if c != "Off" { $0.chromoColor = c }
         }

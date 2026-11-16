@@ -1,13 +1,17 @@
+import Combine
 import SwiftUI
 
 struct RootTabView: View {
     @Environment(SaunaStore.self) private var store
     @Environment(AppSettings.self) private var settings
+    @Environment(\.modelContext) private var ctx
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var showSettings = false
     @State private var showSchedules = false
     @State private var isLandscape = false
+    /// Ticks while the app is foregrounded, to close a session once its timer ends.
+    private let autoEndTick = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -23,7 +27,16 @@ struct RootTabView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .task { SaunaActivityController.shared.configure(settings); store.startPolling() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { store.startPolling() } else { store.stopPolling() }
+            if phase == .active {
+                store.startPolling()
+                // Catch a timer that ended while the app was away — logs the backdated session.
+                SessionRunner.autoEndIfDue(store: store, ctx: ctx, settings: settings)
+            } else {
+                store.stopPolling()
+            }
+        }
+        .onReceive(autoEndTick) { _ in
+            SessionRunner.autoEndIfDue(store: store, ctx: ctx, settings: settings)
         }
     }
 
