@@ -302,6 +302,13 @@ private struct TimerCard: View {
         guard state.timerSetMin != nil, !store.timerEndAction.isDefault else { return nil }
         return store.timerEndAction.summary
     }
+    /// When saunad is holding the timer until the cabin reaches target, say so — the
+    /// countdown hasn't started yet, so the bare "30 min" would otherwise look like it's ticking.
+    private var pendingText: String? {
+        guard state.timerPending, state.timerSetMin != nil else { return nil }
+        if let tgt = state.targetTempF { return "starts at \(tgt)°" }
+        return "starts at temperature"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -310,6 +317,12 @@ private struct TimerCard: View {
             Button { showSetup = true } label: { DropdownPill(text: valueText) }
                 .buttonStyle(.plain)
                 .disabled(!state.power)   // device resets the timer on power-on; set it after turning on
+            if let pendingText {
+                Label(pendingText, systemImage: "hourglass")
+                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Theme.ember)
+                    .lineLimit(1)
+            }
             if let endText {
                 Label("then \(endText)", systemImage: "arrow.turn.down.right")
                     .font(.system(.caption2, design: .rounded, weight: .medium))
