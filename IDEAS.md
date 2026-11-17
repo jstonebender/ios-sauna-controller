@@ -36,11 +36,11 @@ it ships. Keep entries short — a sentence of *what* and *why*, not a spec.
 ## Quality of life
 
 - [ ] **"At temp" text notification** — alert the phone the moment the cabin reaches
-      target, so you know when to walk out — must reach you with the app closed. Delivery
-      options to pick from: a real SMS (Twilio, literal text), a free push (ntfy.sh /
-      Pushover, via their app), or APNs push (needs Push enabled on the App ID — currently
-      off). saunad already knows the at-temp moment (`_at_temp`); it just needs to fire the
-      alert once per climb.
+      target, so you know when to walk out — must reach you with the app closed. **Decided:
+      real SMS via Twilio** (there's already a Twilio account from another project). saunad
+      already knows the at-temp moment (`_at_temp`); it just needs to fire one SMS per climb
+      (debounced so a flaky reading can't spam). Twilio creds (account SID, auth token,
+      from-number, your to-number) go in the gitignored `options.json` — never in the repo.
 - [ ] **Offer to launch the VPN when it can't reach saunad** — when the app fails to
       connect (you're off the home Wi-Fi), show a "Connect via Tailscale" button that opens
       the VPN, then auto-retry. saunad is already reachable over Tailscale; this just removes
