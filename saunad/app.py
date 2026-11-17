@@ -48,6 +48,14 @@ _timer_end_deadline: Optional[float] = None  # wall-clock moment the timer shoul
 _power_off_at: Optional[float] = None        # wait-mode: when to cut power after the heat ends
 _timer_pending_min: Optional[int] = None     # timer set below target: counts only once at temp
 
+# The FD-5's heater only runs while its OWN timer (DP105) is > 0 — it cuts the heater when
+# that device timer reaches 0. So while a timer is pending (preheat, below target), we keep
+# the device timer pegged at its max so the cabin can actually heat; saunad holds the real
+# duration internally and writes it to the device once target is reached. Topped up by the
+# watchdog so a long preheat can't let the device timer run down and kill the heater.
+PREHEAT_DEVICE_TIMER = 90   # minutes (device max, TIMER_RANGE high)
+PREHEAT_TOPUP_BELOW = 10    # re-peg the device timer when it drops to/below this during preheat
+
 
 def _at_temp(cur: Optional[int], tgt: Optional[int]) -> bool:
     """Has the cabin reached target (within the app's ~2°F 'ready' margin)? No target to wait
@@ -216,10 +224,14 @@ async def control(body: ControlBody):
             # Tuya write the FD-5 ignores can't lose it. saunad fires the end-action off its
             # own deadline, so it holds even if the device never accepted the timer.
             _arm_timer_end(body.timerMin, body.timerEndAction)
-            # Program the FD-5's own timer only when it's counting now; a pending (temp-gated)
-            # timer gets set on the device once the watchdog sees target reached.
+            # Program the FD-5's own timer. When counting now, write the real duration. When
+            # pending (temp-gated), write the device MAX instead of nothing: the FD-5 won't
+            # heat with its timer at 0, so preheat needs a running device timer. The watchdog
+            # swaps in the real duration once target is reached.
             if body.timerMin == 0 or _timer_pending_min is None:
                 st = await sauna.set_timer(body.timerMin)
+            else:
+                st = await sauna.set_timer(PREHEAT_DEVICE_TIMER)
         if body.heater is not None and not started:
             st = await sauna.set_heater(body.heater)
         if body.chromoColor is not None:
@@ -520,6 +532,14 @@ async def _heater_watchdog():
                 with contextlib.suppress(Exception):
                     await sauna.set_timer(mins)
                 log.info("timer started: %s min at temp (reached %s°F, target %s°F)", mins, cur, tgt)
+            # Still preheating (pending, not yet at temp): the FD-5 kills the heater when its own
+            # timer hits 0, so top it back up before it runs down — a long climb must not stall.
+            elif _timer_end_armed and _timer_pending_min is not None and heater \
+                    and isinstance(rem, int) and rem <= PREHEAT_TOPUP_BELOW:
+                with contextlib.suppress(Exception):
+                    await sauna.set_timer(PREHEAT_DEVICE_TIMER)
+                log.info("preheat: re-pegged device timer to %s min (was %s, still heating to target)",
+                         PREHEAT_DEVICE_TIMER, rem)
 
             # wait-mode: cut power once the hold elapses.
             if _power_off_at is not None and now >= _power_off_at:
@@ -568,8 +588,10 @@ async def _fire_schedule(s: "schedules.Schedule"):
                 # Temp-gated: at a scheduled start the cabin is cold, so this holds pending and
                 # counts only once at target — the session isn't eaten by preheat.
                 _arm_timer_end(s.timerMin, None)   # scheduled timer ends in a plain full-off
-                if _timer_pending_min is None:
-                    await sauna.set_timer(s.timerMin)
+                # Counting now → real duration; pending (cold start) → device max so the
+                # heater runs through preheat (the watchdog swaps in the real duration at temp).
+                await sauna.set_timer(s.timerMin if _timer_pending_min is None
+                                      else PREHEAT_DEVICE_TIMER)
             if s.chromoColor and s.chromoColor != "Off":
                 await sauna.set_light(s.chromoColor)
         else:
