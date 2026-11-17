@@ -27,7 +27,10 @@ struct SaunaSchedule: Identifiable, Codable, Equatable {
     /// Fields applied when turning on; nil means "leave as is".
     var targetTempF: Int? = 150
     var chromoColor: String? = "White"
-    var timerMin: Int? = nil
+    /// A scheduled session always has a duration — a "heat forever" schedule is a footgun
+    /// (it only stops at the deadman). Kept Optional for decoding older stored schedules;
+    /// the editor coerces nil to a real value, so saved schedules are never nil.
+    var timerMin: Int? = 30
 
     var isOneTime: Bool { weekdays.isEmpty }
 

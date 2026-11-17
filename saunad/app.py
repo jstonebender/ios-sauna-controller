@@ -77,6 +77,8 @@ _timer_end_armed = False                     # a commanded countdown is running,
 _timer_end_deadline: Optional[float] = None  # wall-clock moment the timer should reach 0
 _power_off_at: Optional[float] = None        # wait-mode: when to cut power after the heat ends
 _timer_pending_min: Optional[int] = None     # timer set below target: counts only once at temp
+_saw_timer_running = False                   # observed the device timer > 1 this heat — gates the
+                                             # un-armed safety so a stale 0 right after a start can't kill it
 
 # The FD-5's heater only runs while its OWN timer (DP105) is > 0 — it cuts the heater when
 # that device timer reaches 0. So while a timer is pending (preheat, below target), we keep
@@ -539,6 +541,7 @@ async def _heater_watchdog():
       remaining is force-stopped (belt-and-braces; the FD-5's own timer didn't).
     - deadman: heater on longer than server.heaterMaxOnMinutes (if configured)."""
     global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at, _timer_pending_min
+    global _saw_timer_running
     FIRE_LEAD = 20   # fire this many seconds before the deadline, to beat the device power-cut
     stuck_ticks = 0
     while True:
@@ -568,6 +571,7 @@ async def _heater_watchdog():
                 _power_off_at = None
                 _timer_pending_min = None
                 _heater_on_since = None
+                _saw_timer_running = False
                 stuck_ticks = 0
                 continue
 
@@ -597,9 +601,18 @@ async def _heater_watchdog():
                     await sauna.set_power(False)
                 log.info("timer end: wait elapsed — powered off")
 
-            # un-armed safety: a heater stuck on at 0 that saunad isn't managing (e.g. a
-            # panel-set timer) — force stop after two ticks to ride out a transient 0.
-            if not _timer_end_armed and heater and rem == 0:
+            # Note once the device timer is actually running, so the un-armed safety can tell a
+            # genuine countdown-to-0 from a stale/absent 0 right after a start.
+            if heater and isinstance(rem, int) and rem > 1:
+                _saw_timer_running = True
+            elif not heater:
+                _saw_timer_running = False
+
+            # un-armed safety: a heater stuck on at 0 that saunad isn't managing (e.g. a panel-set
+            # timer that expired) — force stop after two ticks to ride out a transient 0. Only once
+            # we've SEEN the timer running this heat, so a fresh start whose device timer hasn't
+            # reported yet (or a no-timer session) isn't killed 10s in.
+            if not _timer_end_armed and heater and rem == 0 and _saw_timer_running:
                 stuck_ticks += 1
                 if stuck_ticks >= 2:
                     await _stop_sauna("timer reached 0 with the heater still on")
@@ -641,6 +654,11 @@ async def _fire_schedule(s: "schedules.Schedule"):
                 # heater runs through preheat (the watchdog swaps in the real duration at temp).
                 await sauna.set_timer(s.timerMin if _timer_pending_min is None
                                       else PREHEAT_DEVICE_TIMER)
+            else:
+                # No session timer: still give the FD-5 a running timer (it won't heat with its
+                # own timer at 0), and so rem reads nonzero right away instead of a stale 0 that
+                # would trip the un-armed watchdog safety and kill the fresh start.
+                await sauna.set_timer(PREHEAT_DEVICE_TIMER)
             if s.chromoColor and s.chromoColor != "Off":
                 await sauna.set_light(s.chromoColor)
         else:

@@ -100,7 +100,9 @@ struct ScheduleEditorView: View {
     private var isNew: Bool { !store.schedules.contains { $0.id == schedule.id } }
 
     init(schedule: SaunaSchedule) {
-        _schedule = State(initialValue: schedule)
+        var s = schedule
+        if s.timerMin == nil { s.timerMin = 30 }   // a schedule always has a duration
+        _schedule = State(initialValue: s)
         _mode = State(initialValue: schedule.isOneTime ? .once : .weekly)
     }
 
@@ -174,9 +176,8 @@ struct ScheduleEditorView: View {
                             Text("Cycle").tag(Optional(ChromaPalette.scroll))
                         }
                         Picker("Timer", selection: timerBinding) {
-                            Text("None").tag(Optional<Int>.none)
                             ForEach(settings.timerPresets, id: \.self) { m in
-                                Text("\(m) min").tag(Optional(m))
+                                Text("\(m) min").tag(m)
                             }
                         }
                     }
@@ -273,8 +274,9 @@ struct ScheduleEditorView: View {
         Binding(get: { schedule.chromoColor }, set: { schedule.chromoColor = $0 })
     }
 
-    private var timerBinding: Binding<Int?> {
-        Binding(get: { schedule.timerMin }, set: { schedule.timerMin = $0 })
+    private var timerBinding: Binding<Int> {
+        Binding(get: { schedule.timerMin ?? settings.timerPresets.first ?? 30 },
+                set: { schedule.timerMin = $0 })
     }
 
     /// Toggle for an optional Int field: on = some(default), off = nil.
