@@ -49,6 +49,14 @@ struct BridgeClient: Sendable {
 
     func audioState() async throws -> AudioState { try await send("/audio/state", method: "GET") }
 
+    /// Recent saunad log lines for the in-app log browser. `level` keeps records at or above
+    /// that severity; `all` includes the noisy HTTP access lines (off by default).
+    func logs(limit: Int = 200, level: String = "info", all: Bool = false) async throws -> [LogEntry] {
+        let q = "/logs?limit=\(limit)&level=\(level)&all=\(all)"
+        let resp: LogsResponse = try await send(q, method: "GET")
+        return resp.lines
+    }
+
     /// Push the whole schedule set (+ learned heat rate) to saunad, which fires them.
     func syncSchedules(_ schedules: [SaunaSchedule], heatRatePerMin: Double) async throws {
         let payload = SchedulesPayload(schedules: schedules.map(ScheduleWire.init),
@@ -86,7 +94,12 @@ struct BridgeClient: Sendable {
 
     private func send<T: Decodable>(_ path: String, method: String,
                                     body: (any Encodable)? = nil) async throws -> T {
-        var req = URLRequest(url: base.appendingPathComponent(path))
+        // Resolve relative to the base so a query string (e.g. "/logs?limit=200") survives —
+        // appendingPathComponent would percent-encode the "?" into the path and 404.
+        guard let url = URL(string: path, relativeTo: base)?.absoluteURL else {
+            throw BridgeError.badURL
+        }
+        var req = URLRequest(url: url)
         req.httpMethod = method
         // Polls must fail fast; mutations ride out saunad's verified toggle writes
         // (read → toggle → confirm the status DP actually changed → retry once).
@@ -118,6 +131,18 @@ struct EmptyResponse: Decodable { }
 private struct EmptyBody: Encodable { }
 
 struct AudioState: Decodable { let volume: Int? }
+
+/// One saunad log line (GET /logs).
+struct LogEntry: Decodable, Identifiable, Equatable {
+    let seq: Int
+    let ts: Double
+    let level: String
+    let logger: String
+    let msg: String
+    var id: Int { seq }
+    var date: Date { Date(timeIntervalSince1970: ts) }
+}
+private struct LogsResponse: Decodable { let lines: [LogEntry] }
 
 struct DebugRaw: Decodable { let raw: [String: String]; let online: Bool }
 enum DebugValue: Encodable {

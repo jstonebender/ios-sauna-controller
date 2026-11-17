@@ -5,6 +5,7 @@ ember iOS app, controls the 'Sauna' Sonos (sonos.py), and pushes Live Activity
 updates via APNs (apns.py). Runs natively (systemd) on the Homebridge Pi, or in Docker.
 """
 import asyncio
+import collections
 import contextlib
 import logging
 import time
@@ -21,6 +22,35 @@ from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("saunad")
+
+
+class _RingLogHandler(logging.Handler):
+    """Keep the most recent log records in memory so the iOS app can read them over HTTP
+    (GET /logs) — the app can't shell into the container, and `docker logs` is drowned in
+    per-poll HTTP access lines. Each record is stored structured so the app can filter and
+    colour by level. Secrets are never logged, so this is safe to expose like /state."""
+    def __init__(self, capacity: int = 500):
+        super().__init__()
+        self.buf: collections.deque = collections.deque(maxlen=capacity)
+        self._seq = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._seq += 1
+            self.buf.append({
+                "seq": self._seq,
+                "ts": record.created,
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": record.getMessage(),
+            })
+        except Exception:
+            pass  # logging must never raise
+
+
+_log_ring = _RingLogHandler(500)
+_log_ring.setLevel(logging.INFO)
+logging.getLogger().addHandler(_log_ring)   # root: captures saunad.* and uvicorn alike
 
 # Runtime singletons — constructed in lifespan (no import-time I/O).
 sauna: Optional[SaunaClient] = None
@@ -186,6 +216,25 @@ async def get_state():
         st["timerSetMin"] = _timer_pending_min   # show the configured duration during preheat
         st["timerPending"] = True                # set, but not counting until at temp
     return st
+
+
+@app.get("/logs")
+async def get_logs(limit: int = 200, level: str = "info", all: bool = False):
+    """Recent saunad log lines for the in-app log browser. Open like /state (no secrets are
+    ever logged). `level` keeps records at or above that severity (debug/info/warning/error).
+    By default the noisy per-request HTTP access lines (uvicorn.access) are excluded — the
+    events you care about (timer, schedule, heater, watchdog); pass all=true for everything."""
+    order = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+    floor = order.get(level.upper(), 20)
+    limit = max(1, min(1000, limit))
+    out = []
+    for e in _log_ring.buf:
+        if order.get(e["level"], 20) < floor:
+            continue
+        if not all and e["logger"] == "uvicorn.access":
+            continue
+        out.append(e)
+    return {"lines": out[-limit:]}
 
 
 @app.get("/debug/raw", dependencies=[Depends(require_debug), Depends(require_auth)])

@@ -78,6 +78,9 @@ struct SettingsView: View {
                     NavigationLink {
                         LogView().navigationTitle("Log")
                     } label: { Label("Session log", systemImage: "list.bullet.rectangle.portrait") }
+                    NavigationLink {
+                        LogsView()
+                    } label: { Label("saunad logs", systemImage: "terminal") }
                     #if DEBUG
                     NavigationLink {
                         DebugView().navigationTitle("Debug").navigationBarTitleDisplayMode(.inline)
