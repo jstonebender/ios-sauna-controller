@@ -69,6 +69,12 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Confirm Start / Stop & Get In / Out", isOn: $settings.confirmActions)
+                } footer: {
+                    Text("Ask for a tap-to-confirm before heating starts or stops and before getting in or out — so an accidental tap can’t kill a running session.")
+                }
+
+                Section {
                     NavigationLink {
                         TimerDurationsView()
                     } label: { Label("Timer durations", systemImage: "timer") }

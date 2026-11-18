@@ -59,12 +59,19 @@ enum SessionRunner {
 /// Compact Get In / Get Out button for the Control screen.
 struct SessionButton: View {
     @Environment(SaunaStore.self) private var store
+    @Environment(AppSettings.self) private var settings
     @Environment(\.modelContext) private var ctx
     @AppStorage(SessionRunner.key) private var activeStart: Double = 0
+    @State private var confirming = false
 
     private var inSession: Bool { activeStart > 0 }
     // Can't "Get In" a sauna that's off; "Get Out" always works once in a session.
     private var disabled: Bool { !inSession && !store.state.power }
+
+    private func perform() {
+        inSession ? SessionRunner.getOut(store: store, ctx: ctx)
+                  : SessionRunner.getIn(store: store)
+    }
 
     /// Whether the cabin has reached the target (ready to get in).
     private var atTarget: Bool {
@@ -74,8 +81,7 @@ struct SessionButton: View {
 
     var body: some View {
         Button {
-            inSession ? SessionRunner.getOut(store: store, ctx: ctx)
-                      : SessionRunner.getIn(store: store)
+            if settings.confirmActions { confirming = true } else { perform() }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: inSession ? "figure.walk.departure" : "figure.walk.arrival")
@@ -97,5 +103,14 @@ struct SessionButton: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.45 : 1)
+        .confirmationDialog(inSession ? "End your session?" : "Get in?",
+                            isPresented: $confirming, titleVisibility: .visible) {
+            Button(inSession ? "Get Out" : "Get In",
+                   role: inSession ? .destructive : nil) { perform() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(inSession ? "Ends the session, logs it, and turns the sauna off."
+                           : "Starts your session — lights on and the timer set.")
+        }
     }
 }

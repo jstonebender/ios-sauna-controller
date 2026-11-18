@@ -152,10 +152,17 @@ private struct TargetTick: Shape {
 
 private struct StartStopButton: View {
     @Environment(SaunaStore.self) private var store
+    @Environment(AppSettings.self) private var settings
+    @State private var confirming = false
+
+    private func perform() {
+        Task { store.state.heater ? await store.stop() : await store.start() }
+    }
+
     var body: some View {
         let heating = store.state.heater
         Button {
-            Task { heating ? await store.stop() : await store.start() }
+            if settings.confirmActions { confirming = true } else { perform() }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: heating ? "stop.circle.fill" : "flame.fill")
@@ -186,6 +193,15 @@ private struct StartStopButton: View {
         .buttonStyle(.plain)
         .disabled(store.busy)
         .opacity(store.busy ? 0.7 : 1)
+        .confirmationDialog(heating ? "Turn off the sauna?" : "Start heating?",
+                            isPresented: $confirming, titleVisibility: .visible) {
+            Button(heating ? "Turn Off" : "Start Heating",
+                   role: heating ? .destructive : nil) { perform() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(heating ? "This stops heating right away."
+                         : "The sauna will start warming up.")
+        }
     }
 }
 

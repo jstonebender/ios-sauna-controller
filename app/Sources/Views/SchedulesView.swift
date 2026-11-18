@@ -205,7 +205,7 @@ struct ScheduleEditorView: View {
             .onChange(of: mode) { _, m in
                 if m == .once {
                     schedule.weekdays = []
-                    if schedule.onceDate == nil { schedule.onceDate = Date().addingTimeInterval(86400) }
+                    if schedule.onceDate == nil { schedule.onceDate = Date() }   // default to today
                 } else {
                     schedule.onceDate = nil
                     if schedule.weekdays.isEmpty { schedule.weekdays = [2, 3, 4, 5, 6] }
@@ -257,7 +257,7 @@ struct ScheduleEditorView: View {
     }
 
     private var onceBinding: Binding<Date> {
-        Binding(get: { schedule.onceDate ?? Date().addingTimeInterval(86400) },
+        Binding(get: { schedule.onceDate ?? Date() },
                 set: { schedule.onceDate = $0 })
     }
 

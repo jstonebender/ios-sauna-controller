@@ -44,6 +44,11 @@ final class AppSettings {
     var autoEndSessionAtTimerEnd: Bool {
         didSet { UserDefaults.standard.set(autoEndSessionAtTimerEnd, forKey: Self.kAutoEnd) }
     }
+    /// Ask for a tap-to-confirm before Start/Stop heating and Get In/Out — guards against
+    /// a fat-finger tap killing a running session. On by default.
+    var confirmActions: Bool {
+        didSet { UserDefaults.standard.set(confirmActions, forKey: Self.kConfirm) }
+    }
 
     static let defaultPresets = [25, 60, 75, 90]
 
@@ -55,6 +60,7 @@ final class AppSettings {
     private static let kDefLight = "saunad.defaultLightColor"
     private static let kDefEndAction = "saunad.defaultTimerEndAction"
     private static let kAutoEnd = "saunad.autoEndSessionAtTimerEnd"
+    private static let kConfirm = "saunad.confirmActions"
 
     init() {
         baseURL = UserDefaults.standard.string(forKey: Self.kURL) ?? Self.buildDefault("SaunadDefaultURL")
@@ -70,6 +76,7 @@ final class AppSettings {
             defaultTimerEndAction = .default
         }
         autoEndSessionAtTimerEnd = (UserDefaults.standard.object(forKey: Self.kAutoEnd) as? Bool) ?? true
+        confirmActions = (UserDefaults.standard.object(forKey: Self.kConfirm) as? Bool) ?? true
     }
 
     /// Default injected at build time from the gitignored Local.xcconfig (via Info.plist).
