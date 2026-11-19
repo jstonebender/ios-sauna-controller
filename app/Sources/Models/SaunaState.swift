@@ -10,6 +10,9 @@ struct SaunaState: Codable, Equatable, Sendable {
     var timerRemainingMin: Int? = nil
     /// saunad is holding the timer until the cabin reaches target — it isn't counting down yet.
     var timerPending = false
+    /// Authoritative wall-clock moment the timer hits zero (epoch seconds), reported by saunad
+    /// while a timer is counting. Anchor the countdown here, not the FD-5's slow panel timer.
+    var timerEndsAt: Double? = nil
     var chromoColor: String? = nil
     var unit = "f"
     /// Set by saunad when the heater stopped without being asked (e.g. a panel tap); epoch seconds.
@@ -21,7 +24,7 @@ struct SaunaState: Codable, Equatable, Sendable {
 
     enum K: String, CodingKey {
         case power, heater, currentTempF, targetTempF, timerSetMin, timerRemainingMin
-        case timerPending, chromoColor, unit, heaterInterruptedAt, online, updatedAt
+        case timerPending, timerEndsAt, chromoColor, unit, heaterInterruptedAt, online, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -36,6 +39,7 @@ struct SaunaState: Codable, Equatable, Sendable {
         timerSetMin = int(.timerSetMin)
         timerRemainingMin = int(.timerRemainingMin)
         timerPending = bool(.timerPending)
+        timerEndsAt = (try? c.decodeIfPresent(Double.self, forKey: .timerEndsAt)) ?? nil
         chromoColor = str(.chromoColor)
         unit = str(.unit) ?? "f"
         heaterInterruptedAt = (try? c.decodeIfPresent(Double.self, forKey: .heaterInterruptedAt)) ?? nil

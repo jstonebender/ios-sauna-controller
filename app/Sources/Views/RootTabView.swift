@@ -11,6 +11,7 @@ struct RootTabView: View {
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var showSettings = false
     @State private var showSchedules = false
+    @State private var confirmingPower = false
     @State private var isLandscape = false
     /// Ticks while the app is foregrounded, to close a session once its timer ends.
     private let autoEndTick = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
@@ -66,6 +67,15 @@ struct RootTabView: View {
                 .toolbar { settingsButton; schedulesButton; powerButton }
                 .toolbarBackground(.hidden, for: .navigationBar)
                 .sheet(isPresented: $showSchedules) { SchedulesView() }
+                .confirmationDialog(store.state.power ? "Turn the sauna off?" : "Turn the sauna on?",
+                                    isPresented: $confirmingPower, titleVisibility: .visible) {
+                    Button(store.state.power ? "Turn Off" : "Turn On",
+                           role: store.state.power ? .destructive : nil) { togglePower() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(store.state.power ? "Cuts power — heat, timer and lights all stop."
+                                           : "Powers on the sauna.")
+                }
         }
     }
 
@@ -94,12 +104,16 @@ struct RootTabView: View {
 
     @ToolbarContentBuilder private var powerButton: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Button { Task { await store.setPower(!store.state.power) } } label: {
+            Button {
+                if settings.confirmActions { confirmingPower = true } else { togglePower() }
+            } label: {
                 Image(systemName: "power")
             }
             .tint(store.state.power ? Theme.ember : Theme.textSecondary)
         }
     }
+
+    private func togglePower() { Task { await store.setPower(!store.state.power) } }
 
     /// Push the current schedules + learned heat rate up to saunad, which fires them.
     /// Best-effort: a failed sync just retries on the next edit / foreground / launch.

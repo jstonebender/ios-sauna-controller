@@ -94,7 +94,21 @@ final class SaunaStore {
     /// only on real drift (DP105 has 1-min resolution — re-anchoring every poll would
     /// wobble the displayed countdown by up to 59s).
     private func reconcileTimerDeadline(with s: SaunaState) {
-        guard s.heater, let rem = s.timerRemainingMin, rem > 0 else { timerDeadline = nil; return }
+        // No countdown while off, not heating, or still holding the timer until target.
+        guard s.heater, !s.timerPending else { timerDeadline = nil; return }
+        // Prefer saunad's authoritative end time — the wall-clock deadline it actually fires on,
+        // so the countdown reaches 0 exactly when the session ends. The FD-5's own panel timer
+        // (timerRemainingMin) runs slow and drifts minutes off over a session, which showed as
+        // the sauna "shutting off early" with time still on the clock.
+        if let endsAt = s.timerEndsAt {
+            let d = Date(timeIntervalSince1970: endsAt)
+            timerDeadline = d > .now ? d : nil
+            return
+        }
+        // Fallback (older saunad with no end time): anchor the Date-based countdown to the polled
+        // whole-minute remaining, re-anchoring only on real drift (DP105 has 1-min resolution —
+        // re-anchoring every poll would wobble the displayed countdown by up to 59s).
+        guard let rem = s.timerRemainingMin, rem > 0 else { timerDeadline = nil; return }
         let implied = timerDeadline.map { Int(($0.timeIntervalSinceNow / 60).rounded(.up)) }
         if implied == nil || abs(implied! - rem) > 1 {
             timerDeadline = Date().addingTimeInterval(TimeInterval(rem) * 60)

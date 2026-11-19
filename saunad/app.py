@@ -217,6 +217,12 @@ async def get_state():
     if _timer_pending_min is not None:
         st["timerSetMin"] = _timer_pending_min   # show the configured duration during preheat
         st["timerPending"] = True                # set, but not counting until at temp
+    elif _timer_end_armed and _timer_end_deadline is not None:
+        # Authoritative moment the timer hits zero — the wall-clock deadline saunad actually
+        # fires on. The app anchors its countdown here instead of the FD-5's own panel timer
+        # (DP105), which runs slow and drifts ~2 min off over a session; otherwise the on-screen
+        # countdown still shows minutes left when saunad has correctly ended the session.
+        st["timerEndsAt"] = _timer_end_deadline
     return st
 
 
