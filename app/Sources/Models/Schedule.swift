@@ -149,6 +149,27 @@ final class SchedulesStore {
         }
     }
 
+    /// Disable any one-time schedule whose fire time has already passed, so a spent "Once"
+    /// schedule retires itself instead of lingering in the list for days. A single array
+    /// mutation (if anything changed) persists and triggers a re-sync to saunad. Kept disabled
+    /// rather than deleted, so you can still see it ran and re-enable it with a new date.
+    func expirePastOneTimes(now: Date = .now, calendar: Calendar = .current) {
+        var updated = schedules
+        var changed = false
+        for i in updated.indices {
+            let s = updated[i]
+            guard s.enabled, s.isOneTime, let once = s.onceDate,
+                  let anchor = calendar.date(bySettingHour: s.hour, minute: s.minute,
+                                             second: 0, of: once) else { continue }
+            // Grace past the anchor so one firing *right now* is never retired early.
+            if now >= anchor.addingTimeInterval(120) {
+                updated[i].enabled = false
+                changed = true
+            }
+        }
+        if changed { schedules = updated }   // one assignment → one persist + one sync
+    }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(schedules) {
             UserDefaults.standard.set(data, forKey: Self.key)

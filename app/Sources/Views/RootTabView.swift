@@ -28,12 +28,17 @@ struct RootTabView: View {
         }
         .onGeometryChange(for: Bool.self) { $0.size.width > $0.size.height } action: { isLandscape = $0 }
         .sheet(isPresented: $showSettings) { SettingsView() }
-        .task { SaunaActivityController.shared.configure(settings); store.startPolling(); syncSchedules() }
+        .task {
+            SaunaActivityController.shared.configure(settings); store.startPolling()
+            schedules.expirePastOneTimes()   // retire spent "Once" schedules before syncing
+            syncSchedules()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 store.startPolling()
                 // Catch a timer that ended while the app was away — logs the backdated session.
                 SessionRunner.autoEndIfDue(store: store, ctx: ctx, settings: settings)
+                schedules.expirePastOneTimes()   // retire spent "Once" schedules
                 syncSchedules()   // keep saunad's copy current (it fires them)
             } else {
                 store.stopPolling()
