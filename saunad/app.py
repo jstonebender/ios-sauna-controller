@@ -80,6 +80,8 @@ _timer_pending_min: Optional[int] = None     # timer set below target: counts on
 _saw_timer_running = False                   # observed the device timer > 1 this heat — gates the
                                              # un-armed safety so a stale 0 right after a start can't kill it
 
+FIRE_LEAD = 20   # seconds: fire the timer end-action this early, to beat the FD-5's own power-cut
+
 # The FD-5's heater only runs while its OWN timer (DP105) is > 0 — it cuts the heater when
 # that device timer reaches 0. So while a timer is pending (preheat, below target), we keep
 # the device timer pegged at its max so the cabin can actually heat; saunad holds the real
@@ -218,11 +220,12 @@ async def get_state():
         st["timerSetMin"] = _timer_pending_min   # show the configured duration during preheat
         st["timerPending"] = True                # set, but not counting until at temp
     elif _timer_end_armed and _timer_end_deadline is not None:
-        # Authoritative moment the timer hits zero — the wall-clock deadline saunad actually
-        # fires on. The app anchors its countdown here instead of the FD-5's own panel timer
-        # (DP105), which runs slow and drifts ~2 min off over a session; otherwise the on-screen
-        # countdown still shows minutes left when saunad has correctly ended the session.
-        st["timerEndsAt"] = _timer_end_deadline
+        # Authoritative moment the heat actually cuts out — the deadline minus the fire lead,
+        # since saunad ends the session FIRE_LEAD seconds early to beat the FD-5's own power-cut.
+        # The app anchors its countdown here instead of the FD-5's own panel timer (DP105), which
+        # runs slow and drifts off over a session; this makes the countdown hit 0 right as the
+        # heat stops, rather than showing time left (minutes on DP105, or the 20s lead).
+        st["timerEndsAt"] = _timer_end_deadline - FIRE_LEAD
     return st
 
 
@@ -548,7 +551,6 @@ async def _heater_watchdog():
     - deadman: heater on longer than server.heaterMaxOnMinutes (if configured)."""
     global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at, _timer_pending_min
     global _saw_timer_running
-    FIRE_LEAD = 20   # fire this many seconds before the deadline, to beat the device power-cut
     stuck_ticks = 0
     while True:
         try:
