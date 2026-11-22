@@ -68,6 +68,12 @@ def _file() -> str:
     return os.path.join(_state_dir(), "schedules.json")
 
 
+def state_dir() -> str:
+    """Public accessor for the writable state directory, so app.py can keep its own
+    persisted state (the armed timer) alongside schedules.json on the same volume."""
+    return _state_dir()
+
+
 def load() -> None:
     """Load persisted schedules at startup (no-op if none stored yet)."""
     global _schedules, _heat_rate

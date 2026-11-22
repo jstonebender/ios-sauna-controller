@@ -7,7 +7,9 @@ updates via APNs (apns.py). Runs natively (systemd) on the Homebridge Pi, or in 
 import asyncio
 import collections
 import contextlib
+import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -81,6 +83,67 @@ _saw_timer_running = False                   # observed the device timer > 1 thi
                                              # un-armed safety so a stale 0 right after a start can't kill it
 
 FIRE_LEAD = 20   # seconds: fire the timer end-action this early, to beat the FD-5's own power-cut
+
+# The armed timer above lives only in memory, so a restart (a deploy, a crash, or a Pi
+# reboot) would silently drop a live session's deadline + end-action — you'd lose the
+# accurate shutoff and the light/power-off that should follow. Persist it next to
+# schedules.json and restore it on boot. Written only when it changes (snapshot-gated),
+# so a steady session doesn't hammer the SD card.
+_timer_persist_snapshot: Optional[tuple] = None
+
+
+def _timer_file() -> str:
+    return os.path.join(schedules.state_dir(), "timer.json")
+
+
+def _persist_timer_state() -> None:
+    """Write the armed-timer state when it changes; remove the file once nothing is armed
+    or pending, so a finished session restores nothing. Never raises into the caller."""
+    global _timer_persist_snapshot
+    snap = (_timer_end_armed, _timer_end_deadline, _timer_pending_min, _power_off_at,
+            json.dumps(_timer_end_action, sort_keys=True))
+    if snap == _timer_persist_snapshot:
+        return
+    try:
+        path = _timer_file()
+        if not _timer_end_armed and _timer_pending_min is None and _power_off_at is None:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(path)
+        else:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"armed": _timer_end_armed, "deadline": _timer_end_deadline,
+                           "pendingMin": _timer_pending_min, "powerOffAt": _power_off_at,
+                           "action": _timer_end_action}, f)
+            os.replace(tmp, path)
+        _timer_persist_snapshot = snap
+    except Exception as e:
+        log.warning("timer state persist failed: %s", e)
+
+
+def _restore_timer_state() -> None:
+    """Re-arm a persisted timer after a restart. The watchdog takes it from there: it fires
+    an already-past deadline on its first tick, and clears everything if the sauna turns out
+    to be off — so a restart no longer silently drops a live session's end-action."""
+    global _timer_end_action, _timer_end_armed, _timer_end_deadline
+    global _power_off_at, _timer_pending_min
+    try:
+        with open(_timer_file()) as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return
+    except Exception as e:
+        log.warning("timer state load failed (%s); starting clean", e)
+        return
+    _timer_end_action = d.get("action")
+    _timer_end_armed = bool(d.get("armed"))
+    _timer_end_deadline = d.get("deadline")
+    _timer_pending_min = d.get("pendingMin")
+    _power_off_at = d.get("powerOffAt")
+    if _timer_end_armed:
+        where = (f"ends in {_timer_end_deadline - time.time():.0f}s" if _timer_end_deadline is not None
+                 else f"pending {_timer_pending_min} min (waits for target)")
+        log.info("restored armed timer from disk: %s", where)
 
 # The FD-5's heater only runs while its OWN timer (DP105) is > 0 — it cuts the heater when
 # that device timer reaches 0. So while a timer is pending (preheat, below target), we keep
@@ -189,6 +252,7 @@ async def lifespan(app: FastAPI):
 
     await sauna.start()
     schedules.load()
+    _restore_timer_state()   # re-arm a live session's timer across the restart
     tasks = [asyncio.create_task(_push_loop()),
              asyncio.create_task(_heater_watchdog()),
              asyncio.create_task(_scheduler_loop())]
@@ -515,6 +579,7 @@ def _arm_timer_end(timer_min: Optional[int], ea: Optional[EndActionBody]):
         _timer_end_deadline = None
         _power_off_at = None
         _timer_pending_min = None
+    _persist_timer_state()   # capture the arm/clear so a restart can restore it
 
 
 async def _apply_timer_end_action():
@@ -669,6 +734,10 @@ async def _heater_watchdog():
             raise
         except Exception as e:
             log.warning("watchdog error: %s", e)
+        finally:
+            # Persist after every tick (snapshot-gated) so pending→counting conversions,
+            # end-action fires and clears survive a restart — runs on `continue` too.
+            _persist_timer_state()
 
 
 async def _fire_schedule(s: "schedules.Schedule"):
