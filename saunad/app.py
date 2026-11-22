@@ -90,15 +90,25 @@ FIRE_LEAD = 20   # seconds: fire the timer end-action this early, to beat the FD
 PREHEAT_DEVICE_TIMER = 90   # minutes (device max, TIMER_RANGE high)
 PREHEAT_TOPUP_BELOW = 10    # re-peg the device timer when it drops to/below this during preheat
 
+# An IR cabin heats bodies/surfaces, not the air, so the sensor asymptotes — the last couple
+# degrees come slowly and it often parks just under target (more so once someone's inside).
+# Nothing should wait on the exact number, so "ready" means within this band of target.
+READY_TOLERANCE_F = 3
+# Plateau fallback for a SCHEDULED preheat (no one there to shorten the timer): if the climb has
+# stalled this close to target and hasn't risen for this long, treat it as at-temp and start the
+# count — otherwise a cabin that never quite reaches target would hold pending until the deadman.
+PREHEAT_PLATEAU_BAND = 5     # °F below target still eligible for the plateau fallback
+PREHEAT_PLATEAU_SECS = 600   # temp hasn't climbed for this long → "close enough"
+
 
 def _at_temp(cur: Optional[int], tgt: Optional[int]) -> bool:
-    """Has the cabin reached target (within the app's ~2°F 'ready' margin)? No target to wait
-    for → treat as at-temp; unknown temp → not yet (wait for a reading)."""
+    """Has the cabin reached target (within the 'ready' margin)? No target to wait for → treat
+    as at-temp; unknown temp → not yet (wait for a reading)."""
     if tgt is None:
         return True
     if cur is None:
         return False
-    return cur >= tgt - 2
+    return cur >= tgt - READY_TOLERANCE_F
 
 # Schedule firing: id -> the ISO date it last fired, so a schedule fires once per day even
 # though its start window spans several scheduler ticks.
@@ -552,6 +562,8 @@ async def _heater_watchdog():
     global _heater_on_since, _timer_end_armed, _timer_end_deadline, _power_off_at, _timer_pending_min
     global _saw_timer_running
     stuck_ticks = 0
+    preheat_peak = None       # highest temp seen this preheat, and when — for the plateau fallback
+    preheat_peak_at = None
     while True:
         try:
             await asyncio.sleep(5)
@@ -562,6 +574,18 @@ async def _heater_watchdog():
             rem = st.get("timerRemainingMin")
             cur = st.get("currentTempF")
             tgt = st.get("targetTempF")
+
+            # Track the preheat climb so a scheduled session whose cabin never quite reaches target
+            # still starts counting (plateau fallback). Only while a timer is pending and heating;
+            # reset otherwise so each preheat starts fresh.
+            if _timer_end_armed and _timer_pending_min is not None and heater and isinstance(cur, int):
+                if preheat_peak is None or cur > preheat_peak:
+                    preheat_peak, preheat_peak_at = cur, now
+            else:
+                preheat_peak = preheat_peak_at = None
+            plateaued = (preheat_peak_at is not None and now - preheat_peak_at >= PREHEAT_PLATEAU_SECS
+                         and isinstance(cur, int) and isinstance(tgt, int)
+                         and cur >= tgt - PREHEAT_PLATEAU_BAND)
 
             # Armed countdown due? Drive off OUR deadline (immune to device-timer flakiness),
             # firing a little early so power is still on for the light change + hold. This runs
@@ -586,13 +610,15 @@ async def _heater_watchdog():
             # Temp-gated timer: once the cabin reaches target, start the full duration counting
             # (and program the FD-5's own display) — so the session is measured FROM temperature,
             # not burned down during preheat.
-            if _timer_end_armed and _timer_pending_min is not None and _at_temp(cur, tgt):
+            if _timer_end_armed and _timer_pending_min is not None and (_at_temp(cur, tgt) or plateaued):
                 mins = _timer_pending_min
                 _timer_pending_min = None
                 _timer_end_deadline = now + mins * 60
+                preheat_peak = preheat_peak_at = None
                 with contextlib.suppress(Exception):
                     await sauna.set_timer(mins)
-                log.info("timer started: %s min at temp (reached %s°F, target %s°F)", mins, cur, tgt)
+                why = "plateaued near" if plateaued and not _at_temp(cur, tgt) else "reached"
+                log.info("timer started: %s min at temp (%s %s°F, target %s°F)", mins, why, cur, tgt)
             # Still preheating (pending, not yet at temp): the FD-5 kills the heater when its own
             # timer hits 0, so top it back up before it runs down — a long climb must not stall.
             elif _timer_end_armed and _timer_pending_min is not None and heater \

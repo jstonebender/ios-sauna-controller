@@ -63,9 +63,10 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Auto Get In when I shorten the timer", isOn: $settings.autoGetInOnTimer)
                     Toggle("Auto step-out at timer end", isOn: $settings.autoEndSessionAtTimerEnd)
                 } header: { Text("Session") } footer: {
-                    Text("When the heat timer ends, automatically close the session and log it to Health — so a forgotten Get Out never records a multi-hour session. Power and lights follow your timer end-action.")
+                    Text("Auto Get In: when the cabin's at temp and you shorten the running timer (your “I'm in” move), the session starts itself — no need to tap Get In. Auto step-out: when the heat timer ends, the session closes and logs to Health, so a forgotten Get Out never records a multi-hour session. Power and lights follow your timer end-action.")
                 }
 
                 Section {

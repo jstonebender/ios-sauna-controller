@@ -49,14 +49,24 @@ struct SaunaState: Codable, Equatable, Sendable {
 
     // MARK: Derived
 
+    /// Degrees below target still counted as "ready". An IR cabin plateaus a couple degrees
+    /// short (more so once you're inside), so nothing waits on hitting the exact number.
+    static let readyToleranceF = 3
+
+    /// Cabin is at — or within the ready tolerance of — the target temperature.
+    var atTarget: Bool {
+        guard let cur = currentTempF, let tgt = targetTempF else { return false }
+        return cur >= tgt - Self.readyToleranceF
+    }
+
     /// Coarse status for the header.
     enum Status { case off, preheating, ready, heating, idleWarm }
     var status: Status {
         // Heater is the authoritative "on" signal — the power *status* DP (20) lags the
         // toggle by a beat, so keying off it would briefly flash "Off" mid-start.
         if heater {
-            if let cur = currentTempF, let tgt = targetTempF {
-                return cur >= tgt - 2 ? .ready : .preheating
+            if currentTempF != nil, targetTempF != nil {
+                return atTarget ? .ready : .preheating
             }
             return .heating
         }

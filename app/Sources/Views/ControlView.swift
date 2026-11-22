@@ -592,7 +592,7 @@ private struct StatusCard: View {
 
     /// Minutes to reach target from the current temp (nil unless actively climbing).
     private var preheatETA: Int? {
-        guard state.heater, let cur = state.currentTempF, let tgt = state.targetTempF, cur < tgt - 1
+        guard state.heater, !state.atTarget, let cur = state.currentTempF, let tgt = state.targetTempF
         else { return nil }
         return heating.leadMinutes(from: cur, to: tgt)
     }

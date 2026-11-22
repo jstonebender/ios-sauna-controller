@@ -234,10 +234,24 @@ final class SaunaStore {
         Haptics.tap()
         if let endAction { timerEndAction = endAction }
         if m > 0, state.heater { timerDeadline = Date().addingTimeInterval(TimeInterval(m) * 60) }  // optimistic countdown
+        maybeAutoGetIn(newTimer: m)   // shortening a running timer at temp = "I'm in" → start the session
         noteSessionTimer(m)
         // An end-action only rides along with a running timer; m == 0 clears it on saunad.
         let ea = m > 0 ? timerEndAction : nil
         await control(.init(timerMin: m, timerEndAction: ea)) { $0.timerSetMin = m; $0.timerRemainingMin = m }
+    }
+
+    /// Shortening the running timer while the cabin's at temp is how you signal you've climbed in,
+    /// so start the session automatically — no scene change, since you've already set things up.
+    /// Gated on being warm, actually shortening a running timer, and not already in a session; the
+    /// subsequent noteSessionTimer then arms the auto step-out. Opt out via Settings.
+    private func maybeAutoGetIn(newTimer m: Int) {
+        guard settings.autoGetInOnTimer, m > 0,
+              !SessionRunner.inSession,
+              state.heater, state.atTarget,
+              let rem = state.timerRemainingMin, m < rem
+        else { return }
+        SessionRunner.getIn(store: self, applyScene: false)
     }
 
     /// Keep the session auto step-out deadline in step with the running heat timer. Writes the

@@ -222,7 +222,7 @@ final class HeatingModel {
         if climbStartAt == nil {
             climbStartAt = Date(); climbStartTemp = cur; return
         }
-        if cur >= tgt, let start = climbStartAt, let t0 = climbStartTemp {
+        if cur >= tgt - SaunaState.readyToleranceF, let start = climbStartAt, let t0 = climbStartTemp {
             record(deltaF: Double(cur - t0), minutes: Date().timeIntervalSince(start) / 60)
             climbStartAt = nil; climbStartTemp = nil   // wait for the next cold heat-up
         }

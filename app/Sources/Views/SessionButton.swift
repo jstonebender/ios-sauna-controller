@@ -13,13 +13,16 @@ enum SessionRunner {
     static var activeStart: Double { UserDefaults.standard.double(forKey: key) }
     static var inSession: Bool { activeStart > 0 }
 
-    static func getIn(store: SaunaStore) {
+    /// Start a session. `applyScene` runs the Get In scene (interior lights · chroma red ·
+    /// default timer, which also arms auto step-out); pass false for the automatic get-in when
+    /// you've already set the sauna up yourself (shortened the timer), so it isn't clobbered.
+    static func getIn(store: SaunaStore, applyScene: Bool = true) {
         Haptics.success()
         let now = Date()
         UserDefaults.standard.set(now.timeIntervalSince1970, forKey: key)
         Task {
             await store.beginSession()
-            await store.getInScene()   // interior lights on · chroma red · default timer (also arms auto step-out)
+            if applyScene { await store.getInScene() }
             await SaunaActivityController.shared.beginSession(now, state: store.state)
         }
     }
@@ -73,11 +76,8 @@ struct SessionButton: View {
                   : SessionRunner.getIn(store: store)
     }
 
-    /// Whether the cabin has reached the target (ready to get in).
-    private var atTarget: Bool {
-        guard let cur = store.state.currentTempF, let tgt = store.state.targetTempF else { return false }
-        return cur >= tgt
-    }
+    /// Whether the cabin is ready to get in (at target within the ready tolerance).
+    private var atTarget: Bool { store.state.atTarget }
 
     var body: some View {
         Button {
